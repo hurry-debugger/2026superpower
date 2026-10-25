@@ -1,4 +1,5 @@
 # Keil build output (OutputDirectory in the uVision project)
+# Already tracked output must also be removed from the index with git rm --cached.
 /MDK-ARM/2026superpower/
 /MDK-ARM/Objects/
 /MDK-ARM/Listings/
