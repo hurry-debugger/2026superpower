@@ -3,7 +3,7 @@
 /MDK-ARM/2026superpower/
 /MDK-ARM/Objects/
 /MDK-ARM/Listings/
-
+/references/
 # Compiler, assembler and linker output
 *.o
 *.obj

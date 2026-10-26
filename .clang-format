@@ -1,0 +1,22 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+IndentCaseLabels: true
+PointerAlignment: Right
+DerivePointerAlignment: false
+SortIncludes: false
+ReflowComments: false
+# Preserve if(...), for(...), while(...) and switch(...).
+SpaceBeforeParens: Never
+# Native clang-format cannot express "}    break;" (four spaces).
+# Protect actual switch blocks with standalone clang-format off/on comments.
+# ReflowComments=false preserves the Doxygen code examples in the template.
