@@ -47,6 +47,18 @@
 
 /* USER CODE BEGIN PV */
 
+/**
+ * @brief ADC1 循环 DMA 原始计数，顺序为通道 1、3、5、12，范围 0～4095。
+ * @note DMA 在采样时更新，供调试器观察；volatile 不保证四通道的一致快照。
+ */
+static volatile uint16_t adc1_raw[4];
+
+/**
+ * @brief ADC2 循环 DMA 原始计数，对应通道 2，范围 0～4095。
+ * @note DMA 在采样时更新，供调试器观察。
+ */
+static volatile uint16_t adc2_raw[1];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -94,6 +106,30 @@ int main(void)
   MX_ADC1_Init();
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
+    /**
+     * @brief 在主线程中先校准两个单端 ADC，再准备 DMA 等待 HRTIM 外部触发。
+     * @note 任一步骤失败均停止启动流程；成功后才启动下方的 HRTIM。
+     */
+    if(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if(HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if(HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc1_raw, 4) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if(HAL_ADC_Start_DMA(&hadc2, (uint32_t *)adc2_raw, 1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
   HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER);
 
   HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_A);

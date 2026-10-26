@@ -6,7 +6,8 @@
 
 新对话或新 agent 先读 [AGENTS.md](AGENTS.md)，再读 [当前状态](docs/handoff.md)。
 任何文件改动都要先在对话中列出详细清单，获得用户同意；Git 由用户人工提交。
-**不得直接编辑 `.ioc` 或 CubeMX 生成代码，包括 `USER CODE` 区域。**
+**禁止直接编辑 `.ioc`；CubeMX 生成代码仅允许修改获批的 `USER CODE` 区域内部，
+区域外内容及标记行必须保持原样。**
 
 | 入口 | 用途 |
 | --- | --- |
@@ -21,9 +22,11 @@
 
 ## 当前实现
 
-依据当前文件静态读取：`Core/Src/main.c` 初始化 GPIO、DMA、HRTIM1 和 ADC1/ADC2，随后调用
-HRTIM 主计数器、A/B 定时器及对应输出启动函数；主循环为空。
-这不代表 ADC 采样链路、功率闭环或保护状态机已完成，也不代表已通过硬件验证。
+依据当前文件静态读取：`Core/Src/main.c` 初始化 GPIO、DMA、HRTIM1 和 ADC1/ADC2，随后校准
+两个 ADC，分别启动长度为 4 和 1 的循环 DMA，再调用 HRTIM 主计数器、A/B 定时器及对应输出
+启动函数；主循环为空。新增的四次校准和 DMA 启动调用均检查返回值，失败进入 `Error_Handler()`。
+`adc1_raw` 对应通道 1、3、5、12，`adc2_raw` 对应通道 2，仅保存原始计数供调试器观察。
+采样链路尚未上板验证，未实现物理量换算、功率闭环或保护状态机。
 `User/` 本轮只有目录说明；模板没有接入固件构建。
 
 ## 目录
@@ -33,7 +36,7 @@ HRTIM 主计数器、A/B 定时器及对应输出启动函数；主循环为空�
 ├── AGENTS.md             # AI 必读规则
 ├── README.md             # 工程入口
 ├── 2026superpower.ioc    # CubeMX 配置，禁止直接编辑
-├── Core/                # CubeMX 生成代码，禁止直接编辑
+├── Core/                # CubeMX 生成代码，仅获批 USER CODE 内部可编辑
 ├── Drivers/             # 厂商驱动与 CMSIS
 ├── MDK-ARM/             # Keil 工程、启动与生成文件
 ├── User/                # 自维护固件规划，当前仅 README
