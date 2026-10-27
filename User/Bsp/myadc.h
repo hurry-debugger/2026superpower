@@ -1,5 +1,5 @@
 /**
- * @file adc_convert.h
+ * @file myadc.h
  * @brief 超级电容板的 ADC 通道、标称参数及物理量换算。
  * @details 参数依据用户提供的 Super-capacitor control.pdf 第 3～5 页，
  *          INA240A2 增益同时核对 TI 手册；图纸与实板一致性及标定仍待验证。
@@ -7,8 +7,8 @@
  * @note 不访问 ADC/DMA，不进行平均或低通；调用方提供平均后的稳定计数数组。
  */
 
-#ifndef SUPERPOWER_ADC_CONVERT_H
-#define SUPERPOWER_ADC_CONVERT_H
+#ifndef SUPERPOWER_MYADC_H
+#define SUPERPOWER_MYADC_H
 
 #include <stdint.h>
 
@@ -87,12 +87,9 @@ typedef enum
  * @param[in] offset_count 零点，单位计数；允许保留小数。
  * @return (raw_count - offset_count) * ratio，单位由 ratio 决定，保留正负号。
  * @pre ratio、offset_count 均有限，运算中间值及结果可由 float 表示。
- * @note 不限幅、不自动调零、不检查参数；内联展开由编译器决定。
+ * @note 不限幅、不自动调零、不检查参数；实现在 myadc.c，调用优化由编译器决定。
  */
-static inline float AdcConvert_ConvertValue(uint16_t raw_count, float ratio, float offset_count)
-{
-    return ((float)raw_count - offset_count) * ratio;
-}
+float Myadc_ConvertValue(uint16_t raw_count, float ratio, float offset_count);
 
 /**
  * @brief 按通道分别换算平均后的原始计数，写入调用方提供的物理量数组。
@@ -105,11 +102,11 @@ static inline float AdcConvert_ConvertValue(uint16_t raw_count, float ratio, flo
  *       电流正方向为采样电阻 INA240 的 IN+ 侧流向 IN- 侧，实际端口方向待上板验证。
  *       不保证采样同步性，不访问 DMA；可在主线程或中断使用，耗时须在目标板测量。
  */
-float *AdcConvert_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
-                         float adc_convert[ADC_CHANNEL_COUNT]);
+float *Myadc_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
+                     float adc_convert[ADC_CHANNEL_COUNT]);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* SUPERPOWER_ADC_CONVERT_H */
+#endif /* SUPERPOWER_MYADC_H */

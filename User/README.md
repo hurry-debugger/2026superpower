@@ -1,6 +1,7 @@
 # 自维护固件目录
 
-当前已有整数平均、浮点低通和 ADC 物理量换算模块，尚未接入 Keil 构建或中断调度。
+当前已有整数平均、浮点低通和 ADC 物理量换算模块，已登记 Keil 构建分组及头文件路径，
+尚未接入运行流程或中断调度。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
 
@@ -9,7 +10,7 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # 已有 adc_convert.c/.h：板级通道及标称换算
+├── Bsp/          # 已有 myadc.c/.h：板级通道及标称换算
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
@@ -35,7 +36,7 @@ ADC1 含 10 次四通道扫描，共 40 个半字；ADC2 含 10 次单通道采�
 
 ```c
 #include "filter.h"
-#include "adc_convert.h"
+#include "myadc.h"
 
 #define FEEDBACK_SAMPLE_COUNT (10U)
 #define FEEDBACK_ADC1_STRIDE (4U)
@@ -57,13 +58,13 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
     }
     adc_raw[V_CAP] = Filter_AverageU16(adc2_samples, FEEDBACK_SAMPLE_COUNT,
                                      FEEDBACK_ADC2_STRIDE);
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
 }
 ```
 
-`AdcConvert_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
+`Myadc_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
 平均支持其他非零次数与步长；采用 uint32_t 累加、四舍五入到整数计数。
-换算比例、偏置及硬件基础参数集中在 `Bsp/adc_convert.h`，当前为未标定的标称值。
+换算比例、偏置及硬件基础参数集中在 `Bsp/myadc.h`，当前为未标定的标称值。
 
 ## 可选浮点低通
 
@@ -78,7 +79,7 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
 /**
  * @brief 更新调用方保存的各通道物理量历史，首次直接使用当前换算值。
  * @pre 两个数组均有 ADC_CHANNEL_COUNT 个元素，alpha 有效；非首次时历史已初始化。
- * @note 与上例共用 filter.h 和 adc_convert.h，固定反馈周期调用。
+ * @note 与上例共用 filter.h 和 myadc.h，固定反馈周期调用。
  */
 void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
                       float adc_lowpass[ADC_CHANNEL_COUNT], float alpha, bool first_block)
@@ -99,8 +100,9 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
-后续接入时需要将两个 `.c` 加入构建，并配置 `User/Algorithm`、`User/Bsp` 头文件路径；
-本轮没有修改 Keil 配置、DMA、HRTIM 或回调。
+两个 `.c` 已加入 `MDK-ARM/2026superpower.uvprojx` 的对应分组，两个 `.h` 作为头文件登记，
+并配置 `User/Algorithm`、`User/Bsp` 头文件路径；本轮仅完成构建登记，未执行固件构建。
+所有函数实现放在 `.c`，头文件只保留声明、类型和宏；没有新增 DMA、HRTIM 或回调调用。
 
 ## 与生成工程的边界
 
@@ -108,4 +110,5 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 区域外内容及标记行保持原样。** 自维护业务模块优先放在 `User/`。
 放在 User 中的生成文件仍受同样保护，不能通过移动代码规避边界。
 启动和回调可在对应的 USER CODE 区域内接入，仍须先列出具体修改清单并获批。
-本目录说明本身不授权添加调用或改写 Keil 工程；构建接入另行批准。
+后续新增或重命名 C/H 必须把 Keil 分组与头文件路径维护纳入同一清单；
+本目录说明不单独授权写文件或添加运行时调用。

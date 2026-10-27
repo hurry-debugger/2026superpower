@@ -14,7 +14,7 @@
 - 当前配置为 Timer A CMP3 → TRG1 → ADC1、Timer B CMP3 → TRG3 → ADC2；
   两个 DMA 通道均已有生成的中断入口。代码启动链路不等同于上板采样验证或物理量换算。
 - 当前 `User/Algorithm/filter.c/.h` 提供整数平均与浮点低通，
-  `User/Bsp/adc_convert.c/.h` 提供五路物理量换算；尚未加入 Keil 构建或启动流程。
+  `User/Bsp/myadc.c/.h` 提供五路物理量换算；已登记 Keil 构建，尚未接入启动流程。
 - 未加入功率控制、协议、保护状态机或调度器实现。
 - `references/` 中旧工程的模块、时序和算法不属于当前固件的已实现能力。
 
@@ -39,7 +39,7 @@ ADC1 / ADC2 单端校准及 DMA 启动，等待外部触发
 | `.ioc` | CubeMX 配置源 | 禁止直接编辑；变更只能通过获批的 CubeMX 操作 |
 | `Core/` | CubeMX 生成代码 | 仅获批 USER CODE 内部可编辑，区域外及标记行保持原样 |
 | `Drivers/` | HAL / CMSIS 厂商代码 | 不直接改写或套用项目格式 |
-| `MDK-ARM/` | 工程配置、生成启动/RTE、用户调试配置和产物 | 本轮不改；后续按来源与授权处理 |
+| `MDK-ARM/` | 工程配置、生成启动/RTE、用户调试配置和产物 | 本轮仅维护获批 .uvprojx 中自维护模块登记，其他按来源与授权处理 |
 | `User/` | 自维护固件 | 获批后编写，遵守项目代码规范 |
 | `templates/` | 可复用示例 | 不参与 Keil 构建，不代表运行功能 |
 | `docs/`、`tools/` | 自维护文档和检查工具 | 改动同样需要事先批准 |
@@ -50,7 +50,8 @@ ADC1 / ADC2 单端校准及 DMA 启动，等待外部触发
 
 ## 3. 自维护模块与后续规划
 
-Algorithm、Bsp 已包含本轮处理模块；App、Config 仍为规划，不调整 Keil 分组。
+Algorithm、Bsp 已包含处理模块；App、Config 仍为规划。
+已登记 Application/User/Bsp 与 Application/User/Algorithm 分组。
 
 | 规划目录 | 职责 | 依赖方向 |
 | --- | --- | --- |
@@ -63,11 +64,12 @@ Algorithm、Bsp 已包含本轮处理模块；App、Config 仍为规划，不调
 → 可选浮点低通 → 环路反馈。最后的环路及 DMA 批量采集尚未接入。
 
 - `Filter_AverageU16()` 对稳定输入按步长求平均，直接返回 uint16_t 计数，使用 uint32_t 累加。
-- `AdcConvert_Convert()` 按枚举 switch 选取系数与偏置，调用通用内联函数，返回调用方输出地址。
-- `Filter_LowPass()` 和 `AdcConvert_ConvertValue()` 是头文件内的 static inline 简单计算。
+- `Myadc_Convert()` 按枚举 switch 选取系数与偏置，调用通用计算函数，返回调用方输出地址。
+- `Filter_LowPass()` 和 `Myadc_ConvertValue()` 在头文件声明、在对应 `.c` 普通定义；
+  所有函数实现均位于 `.c`。
 - 输入批量缓冲区、平均计数 `adc_raw`、物理量 `adc_convert` 及每通道低通历史均由调用方持有。
   两个计算模块无内部可变状态，不负责 DMA 所有权、采样块配对或中断同步。
-- 五通道枚举定义在 `adc_convert.h`；电压索引单位 V，电流索引单位 A。
+- 五通道枚举定义在 `myadc.h`；电压索引单位 V，电流索引单位 A。
   板级标称参数和派生换算宏也集中于该头文件，Algorithm 不依赖 Bsp。
 
 首次低通历史取当前换算值；之后按反馈周期更新。系数由调用方确定，不能将一个通道的历史
@@ -82,6 +84,7 @@ Algorithm、Bsp 已包含本轮处理模块；App、Config 仍为规划，不调
 先提出用户模块的接口、启动顺序、回调/中断上下文和构建接入方式，再取得用户批准。
 初始化调用和回调可放入获批的 USER CODE 区域内部，区域外内容及标记行必须保持原样；
 不得自行创建 USER CODE 标记、使用重复中断符号或覆盖生成物。
-本轮仅新增独立计算模块及说明，不修改 main、DMA、HRTIM、中断或构建配置。
+本轮重命名计算模块并登记 Keil 构建，不修改 main、DMA、HRTIM 或中断。
+新增或重命名 C/H 须同步维护 Keil 分组、编译条目和头文件路径。
 现有主计数器重复计数设置及中断入口不能单独证明完整采样块已就绪；未来接入需确认最后一次
 转换与 DMA 完成先后关系、两路触发相位、处理期限及覆盖检测，不按重复计数事件盲读缓冲区。

@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32G474xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Drivers/CMSIS/Include</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Drivers/CMSIS/Include;../User/Bsp;../User/Algorithm</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -890,6 +890,36 @@
         </Group>
         <Group>
           <GroupName>::CMSIS</GroupName>
+        </Group>
+        <Group>
+          <GroupName>Application/User/Bsp</GroupName>
+          <Files>
+            <File>
+              <FileName>myadc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/myadc.c</FilePath>
+            </File>
+            <File>
+              <FileName>myadc.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/myadc.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Application/User/Algorithm</GroupName>
+          <Files>
+            <File>
+              <FileName>filter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Algorithm/filter.c</FilePath>
+            </File>
+            <File>
+              <FileName>filter.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Algorithm/filter.h</FilePath>
+            </File>
+          </Files>
         </Group>
       </Groups>
     </Target>

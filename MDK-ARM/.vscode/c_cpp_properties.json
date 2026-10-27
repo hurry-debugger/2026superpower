@@ -8,6 +8,8 @@
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\STM32G4xx_HAL_Driver\\Inc\\Legacy",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\CMSIS\\Device\\ST\\STM32G4xx\\Include",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\CMSIS\\Include",
+                "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\Bsp",
+                "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\Algorithm",
                 "E:\\mcu_tool\\keil5\\Keil_v5\\ARM\\ARMCC\\include",
                 "E:\\mcu_tool\\keil5\\Keil_v5\\ARM\\ARMCC\\include\\rw",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\MDK-ARM",

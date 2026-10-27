@@ -2,7 +2,9 @@
 
 ## 1. 自维护规范检查
 
-工具需要 Python 3.10 或更新版本，仅使用标准库，不安装依赖。
+默认仅做文本、C 语法及构建配置等静态检查，无需编写测试脚本。
+用户特别说明时才增加或执行专项测试；已有脚本按需维护，不默认删除。
+检查工具需要 Python 3.10 或更新版本，仅使用标准库，不安装依赖。
 从工程根目录执行；也可以从其他目录调用脚本，默认根目录仍是脚本所在工程。
 命令不修改工程文件或 Git 索引；`-B` 禁止导入时生成字节码缓存。
 
@@ -12,9 +14,6 @@ python -X utf8 -B tools/check_project.py
 
 # 工作区变更、暂存变更、未跟踪且未被 Git 忽略的受管文件的并集。
 python -X utf8 -B tools/check_project.py --changed
-
-# 行为测试只在系统临时目录创建样例并在退出时清理，不暂存或提交 Git。
-python -X utf8 -B -m unittest discover -s tools -p test_check_project.py -v
 
 # 额外检查 C/H 机械排版，不写回文件。
 python -X utf8 -B tools/check_project.py --format
@@ -56,14 +55,22 @@ python -X utf8 -B tools/check_project.py --format
 命名含义、注释真实程度、接口契约、并发、单位及硬件参数需要人工审阅。
 脚本不是完整 C 语法分析器，也不替代编译器或上板验证。
 
-## 2. 工具测试覆盖
+## 2. 可选检查工具专项测试
+
+以下既有测试在用户特别说明时执行，不是每轮默认检查：
+
+```powershell
+python -X utf8 -B -m unittest discover -s tools -p test_check_project.py -v
+```
 
 使用临时文件验证中文 UTF-8、GB2312、BOM、Tab、行末空白、最终换行、CRLF、中文与空格路径、
 保护目录和生成标记排除、空选择、检查前后字节不变、退出码、Git 读取错误与格式工具缺失。
 Git 清单和不可控的外部格式工具以边界模拟提供输入；测试不在实际仓库暂存或提交。
 `--changed` 另外在真实工作区执行，检查与本轮新增文件的对应关系。
 
-## 3. ADC 主机数值测试
+## 3. 可选 ADC 主机数值测试
+
+保留既有脚本，用户特别说明时执行；不将之前版本的通过结果当作当前版本已运行证据。
 
 ```powershell
 python -X utf8 -B -m unittest discover -s tools -p test_adc_feedback.py -v
@@ -73,7 +80,7 @@ python -X utf8 -B -m unittest discover -s tools -p test_adc_feedback.py -v
 不自动安装。测试在系统临时目录创建两个 C 编译单元及可执行文件，退出时清理，
 不在仓库写入构建产物；使用 `-B` 禁止 Python 字节码缓存。
 
-11 项测试分别在 `-O0`、`-O2` 下链接真实 filter、adc_convert 模块并运行，
+11 项测试分别在 `-O0`、`-O2` 下链接真实 filter、myadc 模块并运行，
 编译采用 C99、`-Wall -Wextra -Werror -pedantic`：
 
 - 单次、10 次、不同次数的连续及步长 4 平均，四舍五入、输入不变和通道隔离。
@@ -81,7 +88,7 @@ python -X utf8 -B -m unittest discover -s tools -p test_adc_feedback.py -v
 - 五通道映射、满量程、零点附近、电流正负号、通用比例和偏置、输出地址。
 - 低通 alpha 为 0、1 及中间值，上升与下降阶跃，各通道历史独立。
 - 完整平均 → 换算 → 初始化历史 → 浮点低通调用链。
-- 两个编译单元共同包含头文件，确认 static inline 不造成重复定义。
+- 两个编译单元从头文件声明调用 `.c` 中的公共函数，确认外部链接。
 
 测试使用独立预期值和浮点容差，不以重复生产公式作为唯一判据。
 接口前置条件之外的零次数、零步长、空指针或非法计数不属于受支持输入，不要求错误码。
@@ -89,14 +96,16 @@ python -X utf8 -B -m unittest discover -s tools -p test_adc_feedback.py -v
 
 ## 4. 编译证据
 
-当前 Keil 工程记录 ARMCC 5.06 update 6（build 750）。本轮不修改构建配置，不将模板加入固件。
-有本机 GCC 时，可进行不产生目标文件的模板 C99 语法检查：
+当前 Keil 工程记录 ARMCC 5.06 update 6（build 750）。myadc、filter 已登记构建，模板不加入固件。
+有本机 GCC 时，默认可进行不产生目标文件的模块 C99 语法检查：
 
 ```powershell
-gcc -std=c99 -Wall -Wextra -Werror -pedantic -fsyntax-only templates/module_template.c
+gcc -std=c99 -Wall -Wextra -Werror -pedantic -I User/Bsp -I User/Algorithm -fsyntax-only User/Bsp/myadc.c User/Algorithm/filter.c
 ```
 
-该检查不能证明 ARMCC 兼容性、链接成功、实时性能或固件可用。
+静态核对 .uvprojx 的模块分组、C 文件类型 1、H 文件类型 5、相对路径和头文件目录，
+确认源文件没有被排除编译，并保留原有目标选项。新增或重命名 C/H 时同步维护这些条目。
+语法及 XML 检查不能证明 ARMCC 兼容性、链接成功、实时性能或固件可用。
 固件构建前应单独确认 Keil 工具位置、目标配置及产物目录；运行生成产物的构建需先获批。
 模板或文本检查不能代替固件构建。本轮不宣称 Keil 编译或硬件测试通过。
 

@@ -1,14 +1,19 @@
 /**
- * @file adc_convert.c
+ * @file myadc.c
  * @brief 根据通道枚举选择标称参数，统一换算电压和电流。
  */
 
-#include "adc_convert.h"
+#include "myadc.h"
 
 /* ==================== 公共接口实现 ==================== */
 
-float *AdcConvert_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
-                         float adc_convert[ADC_CHANNEL_COUNT])
+float Myadc_ConvertValue(uint16_t raw_count, float ratio, float offset_count)
+{
+    return ((float)raw_count - offset_count) * ratio;
+}
+
+float *Myadc_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
+                     float adc_convert[ADC_CHANNEL_COUNT])
 {
     for(uint32_t channel = 0U; channel < ADC_CHANNEL_COUNT; channel++)
     {
@@ -56,7 +61,7 @@ float *AdcConvert_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
         }
         // clang-format on
 
-        adc_convert[channel] = AdcConvert_ConvertValue(adc_raw[channel], ratio, offset_count);
+        adc_convert[channel] = Myadc_ConvertValue(adc_raw[channel], ratio, offset_count);
     }
 
     return adc_convert;

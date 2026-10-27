@@ -43,7 +43,7 @@ HRTIM 端口不能仅凭引脚表认定功率管的实际导通关系、驱动�
 本轮依据用户指定的
 `E:/RoboMaster/code/hardware/AD/Surpercap_control_MiniVerison1.5/Super-capacitor control.pdf`
 第 3～5 页读取标称参数；不将本地 references 副本自动认定为同一版本。
-宏定义位于 `User/Bsp/adc_convert.h`，基础参数与派生参数分开，均未完成实板标定。
+宏定义位于 `User/Bsp/myadc.h`，基础参数与派生参数分开，均未完成实板标定。
 
 | 基础宏 | 标称值及单位 | 来源 |
 | --- | --- | --- |

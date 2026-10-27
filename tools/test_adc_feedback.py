@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # 用独立的预期值验证舍入、通道映射和滤波响应，不复制生产代码作为判定函数。
 HARNESS = r"""
 #include "filter.h"
-#include "adc_convert.h"
+#include "myadc.h"
 
 #include <assert.h>
 #include <math.h>
@@ -21,7 +21,7 @@ HARNESS = r"""
 #include <stdlib.h>
 #include <string.h>
 
-float Test_InlineOtherTu(uint16_t raw_count);
+float Test_FunctionsOtherTu(uint16_t raw_count);
 
 static void ExpectNear(float actual, double expected)
 {
@@ -98,7 +98,7 @@ static void ConversionChannels(void)
     adc_raw[I_CHASSIS] = 0U;
     adc_raw[V_CAP] = 2048U;
     memcpy(original, adc_raw, sizeof(adc_raw));
-    assert(AdcConvert_Convert(adc_raw, adc_convert) == adc_convert);
+    assert(Myadc_Convert(adc_raw, adc_convert) == adc_convert);
     ExpectNear(adc_convert[V_CHASSIS], 15.4);
     ExpectNear(adc_convert[V_BAT], 24.2);
     ExpectNear(adc_convert[I_BAT], 11.0);
@@ -111,7 +111,7 @@ static void ConversionEndpoints(void)
 {
     uint16_t adc_raw[ADC_CHANNEL_COUNT] = {0};
     float adc_convert[ADC_CHANNEL_COUNT];
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
     ExpectNear(adc_convert[V_CHASSIS], 0.0);
     ExpectNear(adc_convert[V_BAT], 0.0);
     ExpectNear(adc_convert[V_CAP], 0.0);
@@ -119,13 +119,13 @@ static void ConversionEndpoints(void)
     {
         adc_raw[i] = 4095U;
     }
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
     ExpectNear(adc_convert[V_CHASSIS], 46.2);
     ExpectNear(adc_convert[V_BAT], 36.3);
     ExpectNear(adc_convert[V_CAP], 36.3);
     adc_raw[I_BAT] = 2047U;
     adc_raw[I_CHASSIS] = 2048U;
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
     ExpectNear(adc_convert[I_BAT], -0.0026862026862);
     ExpectNear(adc_convert[I_CHASSIS], 0.0026862026862);
     assert(adc_convert[I_BAT] < 0.0f && adc_convert[I_CHASSIS] > 0.0f);
@@ -133,10 +133,10 @@ static void ConversionEndpoints(void)
 
 static void ConversionScalar(void)
 {
-    ExpectNear(AdcConvert_ConvertValue(1000U, 0.25f, 20.0f), 245.0);
-    ExpectNear(AdcConvert_ConvertValue(1000U, 0.25f, 1020.0f), -5.0);
-    ExpectNear(AdcConvert_ConvertValue(2048U, 0.5f, 2047.5f), 0.25);
-    ExpectNear(AdcConvert_ConvertValue(1000U, 0.25f, 1000.0f), 0.0);
+    ExpectNear(Myadc_ConvertValue(1000U, 0.25f, 20.0f), 245.0);
+    ExpectNear(Myadc_ConvertValue(1000U, 0.25f, 1020.0f), -5.0);
+    ExpectNear(Myadc_ConvertValue(2048U, 0.5f, 2047.5f), 0.25);
+    ExpectNear(Myadc_ConvertValue(1000U, 0.25f, 1000.0f), 0.0);
 }
 
 static void LowPassEndpoints(void)
@@ -187,7 +187,7 @@ static void FeedbackPipeline(void)
         adc_raw[i] = Filter_AverageU16(&adc1_samples[i], 10U, 4U);
     }
     adc_raw[V_CAP] = Filter_AverageU16(adc2_samples, 10U, 1U);
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
     for(uint32_t i = 0U; i < ADC_CHANNEL_COUNT; i++)
     {
         assert(adc_raw[i] == expected_raw[i]);
@@ -195,7 +195,7 @@ static void FeedbackPipeline(void)
         history[i] = adc_convert[i];
         adc_raw[i] += 10U;
     }
-    AdcConvert_Convert(adc_raw, adc_convert);
+    Myadc_Convert(adc_raw, adc_convert);
     for(uint32_t i = 0U; i < ADC_CHANNEL_COUNT; i++)
     {
         history[i] = Filter_LowPass(adc_convert[i], history[i], 0.25f);
@@ -218,9 +218,9 @@ int main(int argc, char **argv)
     else if(strcmp(argv[1], "feedback_pipeline") == 0) FeedbackPipeline();
     else if(strcmp(argv[1], "two_translation_units") == 0)
     {
-        ExpectNear(Test_InlineOtherTu(1000U), 125.0);
+        ExpectNear(Test_FunctionsOtherTu(1000U), 125.0);
         ExpectNear(Filter_LowPass(20.0f, 10.0f, 0.5f), 15.0);
-        ExpectNear(AdcConvert_ConvertValue(1000U, 0.25f, 20.0f), 245.0);
+        ExpectNear(Myadc_ConvertValue(1000U, 0.25f, 20.0f), 245.0);
     }
     else assert(0);
     return 0;
@@ -229,11 +229,11 @@ int main(int argc, char **argv)
 
 OTHER_TRANSLATION_UNIT = r"""
 #include "filter.h"
-#include "adc_convert.h"
+#include "myadc.h"
 
-float Test_InlineOtherTu(uint16_t raw_count)
+float Test_FunctionsOtherTu(uint16_t raw_count)
 {
-    float value = AdcConvert_ConvertValue(raw_count, 0.25f, 20.0f);
+    float value = Myadc_ConvertValue(raw_count, 0.25f, 20.0f);
     return Filter_LowPass(value, 5.0f, 0.5f);
 }
 """
@@ -249,13 +249,13 @@ class AdcFeedbackTests(unittest.TestCase):
         cls.addClassCleanup(temporary.cleanup)
         cls.build_dir = Path(temporary.name)
         cls.harness = cls.build_dir / "feedback_test.c"
-        cls.other = cls.build_dir / "inline_other.c"
+        cls.other = cls.build_dir / "functions_other.c"
         cls.harness.write_text(HARNESS, encoding="utf-8", newline="\n")
         cls.other.write_text(OTHER_TRANSLATION_UNIT, encoding="utf-8", newline="\n")
         cls.executables = {}
 
     def run_case(self, name):
-        # O0 同样链接两个编译单元，避免仅因优化删去函数而掩盖内联链接问题。
+        # 既有专项测试：两种优化等级均从两个编译单元调用公共函数，核对外部链接。
         for optimization in ("-O0", "-O2"):
             with self.subTest(optimization=optimization):
                 if optimization not in self.executables:
@@ -266,7 +266,7 @@ class AdcFeedbackTests(unittest.TestCase):
                         optimization, "-I", str(ROOT / "User/Algorithm"),
                         "-I", str(ROOT / "User/Bsp"), str(self.harness), str(self.other),
                         str(ROOT / "User/Algorithm/filter.c"),
-                        str(ROOT / "User/Bsp/adc_convert.c"), "-lm", "-o", str(executable),
+                        str(ROOT / "User/Bsp/myadc.c"), "-lm", "-o", str(executable),
                     ]
                     compiled = subprocess.run(
                         command, cwd=self.build_dir, capture_output=True,

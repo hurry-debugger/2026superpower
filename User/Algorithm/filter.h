@@ -39,12 +39,9 @@ uint16_t Filter_AverageU16(const uint16_t *samples, uint16_t sample_count, uint1
  * @pre 三个参数均有限，差值及运算结果可由 float 表示。
  * @note alpha 为 0 时保持历史，为 1 时跟随输入；实际浮点结果受舍入影响。
  *       调用方分别保存各通道历史，并在固定反馈周期更新；周期变化时需重新选择系数。
- *       不持有状态、不检查参数；static inline 不保证编译器一定展开调用。
+ *       不持有状态、不检查参数；实现在 filter.c，实际调用优化由编译器决定。
  */
-static inline float Filter_LowPass(float input, float previous, float alpha)
-{
-    return previous + alpha * (input - previous);
-}
+float Filter_LowPass(float input, float previous, float alpha);
 
 #ifdef __cplusplus
 }

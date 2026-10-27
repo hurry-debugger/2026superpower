@@ -26,10 +26,11 @@
 两个 ADC，分别启动长度为 4 和 1 的循环 DMA，再调用 HRTIM 主计数器、A/B 定时器及对应输出
 启动函数；主循环为空。新增的四次校准和 DMA 启动调用均检查返回值，失败进入 `Error_Handler()`。
 `adc1_raw` 对应通道 1、3、5、12，`adc2_raw` 对应通道 2，仅保存原始计数供调试器观察。
-`User/Algorithm/filter.c/.h` 已提供带步长的整数平均和内联浮点低通，
-`User/Bsp/adc_convert.c/.h` 已提供通道枚举、参数宏、内联通用换算与数组转换。
+`User/Algorithm/filter.c/.h` 已提供带步长的整数平均和浮点低通，
+`User/Bsp/myadc.c/.h` 已提供通道枚举、参数宏、通用计算及 `Myadc_Convert()` 数组转换。
 调用顺序为整数平均 → `adc_raw[通道]` → `adc_convert[通道]` → 可选浮点低通，
-调用示例见 [User/README.md](User/README.md)。这些模块及模板尚未接入 Keil 固件构建。
+调用示例见 [User/README.md](User/README.md)。两个模块已登记 Keil 分组及头文件路径，
+全部函数实现在 `.c` 中，尚未接入运行流程；模板不参与固件构建。
 采样链路尚未上板验证，未实现功率闭环、保护状态机或温度换算。
 
 ## 目录
@@ -42,7 +43,7 @@
 ├── Core/                # CubeMX 生成代码，仅获批 USER CODE 内部可编辑
 ├── Drivers/             # 厂商驱动与 CMSIS
 ├── MDK-ARM/             # Keil 工程、启动与生成文件
-├── User/                # Algorithm 滤波、Bsp 换算及调用说明，尚未接入固件
+├── User/                # Algorithm 滤波、Bsp 换算及调用说明，已登记构建
 ├── docs/                # 架构、规范、状态、决策、硬件与测试
 ├── templates/           # 独立模块模板，不参与固件构建
 ├── tools/               # 只读规范检查及其测试
@@ -58,12 +59,10 @@
 ```powershell
 python -X utf8 -B tools/check_project.py
 python -X utf8 -B tools/check_project.py --changed
-python -X utf8 -B -m unittest discover -s tools -p test_check_project.py -v
-python -X utf8 -B -m unittest discover -s tools -p test_adc_feedback.py -v
 ```
 
-ADC 数值测试需要已有 GCC，仅在系统临时目录编译测试程序；缺失时显示 `NOT_RUN`，
-不能将跳过测试当作数值验证通过。安装环境中已有 `clang-format` 时，可以额外执行：
+默认仅做静态检查，无需新增测试脚本。既有专项测试保留，用户特别说明时按
+[测试说明](docs/testing.md) 执行。安装环境中已有 `clang-format` 时，可以额外执行：
 
 ```powershell
 python -X utf8 -B tools/check_project.py --format

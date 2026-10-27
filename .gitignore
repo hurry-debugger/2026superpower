@@ -4,6 +4,10 @@
 /MDK-ARM/Objects/
 /MDK-ARM/Listings/
 /references/
+/docs/
+/tools/
+/templates/
+
 # Compiler, assembler and linker output
 *.o
 *.obj
