@@ -80,7 +80,7 @@ void MX_HRTIM1_Init(void)
     Error_Handler();
   }
   pTimeBaseCfg.Period = 21760;
-  pTimeBaseCfg.RepetitionCounter = 0x00;
+  pTimeBaseCfg.RepetitionCounter = 9;
   pTimeBaseCfg.PrescalerRatio = HRTIM_PRESCALERRATIO_MUL32;
   pTimeBaseCfg.Mode = HRTIM_MODE_CONTINUOUS;
   if (HAL_HRTIM_TimeBaseConfig(&hhrtim1, HRTIM_TIMERINDEX_MASTER, &pTimeBaseCfg) != HAL_OK)
@@ -111,6 +111,7 @@ void MX_HRTIM1_Init(void)
   {
     Error_Handler();
   }
+  pTimeBaseCfg.RepetitionCounter = 0x00;
   if (HAL_HRTIM_TimeBaseConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, &pTimeBaseCfg) != HAL_OK)
   {
     Error_Handler();
@@ -245,6 +246,10 @@ void HAL_HRTIM_MspInit(HRTIM_HandleTypeDef* hrtimHandle)
   /* USER CODE END HRTIM1_MspInit 0 */
     /* HRTIM1 clock enable */
     __HAL_RCC_HRTIM1_CLK_ENABLE();
+
+    /* HRTIM1 interrupt Init */
+    HAL_NVIC_SetPriority(HRTIM1_Master_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(HRTIM1_Master_IRQn);
   /* USER CODE BEGIN HRTIM1_MspInit 1 */
 
   /* USER CODE END HRTIM1_MspInit 1 */
@@ -292,6 +297,9 @@ void HAL_HRTIM_MspDeInit(HRTIM_HandleTypeDef* hrtimHandle)
   /* USER CODE END HRTIM1_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_HRTIM1_CLK_DISABLE();
+
+    /* HRTIM1 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(HRTIM1_Master_IRQn);
   /* USER CODE BEGIN HRTIM1_MspDeInit 1 */
 
   /* USER CODE END HRTIM1_MspDeInit 1 */

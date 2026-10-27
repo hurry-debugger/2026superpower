@@ -35,24 +35,20 @@
 正确：
 
 ```c
-if(module == NULL)
-    return MODULE_RESULT_INVALID_PARAM;
-
-if(module->state == MODULE_STATE_UNINITIALIZED)
+if(input > upper_limit)
 {
-    ModuleResult_e result = Module_Init(module);
-    return result;
+    output = upper_limit;
 }
-else if(module->state == MODULE_STATE_READY)
-    return MODULE_RESULT_OK;
+else if(input < lower_limit)
+    output = lower_limit;
 else
-    return MODULE_RESULT_INVALID_PARAM;
+    output = input;
 ```
 
 不采用：
 
 ```c
-if(module==NULL) return -1;
+if(input>upper_limit) output=upper_limit;
 ```
 
 `switch` 使用以下布局：`case/default` 相对 `switch` 缩进一级，每个分支有独立作用域；
@@ -61,21 +57,21 @@ if(module==NULL) return -1;
 
 ```c
 // clang-format off
-switch(module->state)
+switch(channel)
 {
-    case MODULE_STATE_UNINITIALIZED:
+    case V_CHASSIS:
     {
-        result = Module_Init(module);
+        ratio = ADC_V_CHASSIS_RATIO;
     }    break;
 
-    case MODULE_STATE_READY:
+    case V_BAT:
     {
-        // 保持原有就绪状态。
+        ratio = ADC_V_BAT_RATIO;
     }    break;
 
     default:
     {
-        result = MODULE_RESULT_INVALID_PARAM;
+        // 示例仅展示分支排版；正式接口应按已定义的通道契约处理。
     }    break;
 }
 // clang-format on
@@ -101,13 +97,15 @@ switch(module->state)
 | 公共及私有函数 | `Module_VerbObject`，私有函数加 `static` | `PowerCtrl_Init()`、`BspAdc_ReadVoltage()` |
 | 结构体类型 | PascalCase 加 `_t` | `PowerCtrl_t` |
 | 枚举类型 | PascalCase 加 `_e` | `PowerCtrlState_e` |
-| 枚举成员、宏 | 模块前缀加大写下划线 | `POWER_CTRL_STATE_IDLE` |
+| 枚举成员、宏 | 默认模块前缀加大写下划线；已约定 ADC 通道可省略前缀 | `ADC_REFERENCE_V`、`V_CHASSIS` |
 | 参数、局部变量、结构体成员 | 小写下划线 | `input_voltage_v`、`sample_count` |
 | 文件私有变量 | `static` 加 `s_` | `s_power_ctrl` |
 | 必要的跨文件全局变量 | `g_`，在唯一 C 文件定义 | `g_system_status` |
 | 头文件保护 | `SUPERPOWER_` 加模块名和 `_H` | `SUPERPOWER_POWER_CTRL_H` |
 
-宏和枚举成员使用公共命名空间，必须带模块前缀。不使用 `__XXX_H__` 等保留名称。
+宏和枚举成员使用公共命名空间，默认带模块前缀。已约定的 ADC 通道枚举使用
+`V_CHASSIS`、`V_BAT`、`I_BAT`、`I_CHASSIS`、`V_CAP`，总数为 `ADC_CHANNEL_COUNT`；
+这些名字仍须避免与其他标识符冲突。不使用 `__XXX_H__` 等保留名称。
 只读数据使用 `const`；文件私有对象仍遵守 `s_`，宏常量使用大写。不要为常量引入另一套命名。
 `is_`、`has_`、`can_` 可用于布尔含义；循环索引可用 `i`，业务量避免 `temp1`、`data2` 等模糊名。
 不使用拼音或无意义的类型前缀；数学推导中的短变量可以保留，但必须解释含义。
@@ -119,13 +117,23 @@ switch(module->state)
 
 - 物理量在变量名中携带单位后缀，例如 `_v`、`_mv`、`_a`、`_ma`、`_w`、`_j`、`_ms`、
   `_us`、`_hz`、`_percent`；宏使用相应大写后缀。同一计算链明确转换位置。
+  混合物理量数组可使用 `adc_convert`，由通道枚举注释明确各索引的单位；
+  `adc_raw` 表示平均后的原始计数，DMA 批量采样缓冲区使用其他名字。
 - 不从旧工程猜测采样比例、保护阈值、控制周期、方向或 CAN 帧定义。实际参数须有来源和验证状态。
+- 硬件参考电压、ADC 满量程、分压倍数、采样电阻、增益、转换系数及零点必须用具名宏。
+  宏注明单位、来源和标定状态，派生宏引用基础参数；计算实现中不散落硬件常量。
 - 计数、协议和位宽明确的数据使用 `<stdint.h>` 的定宽整数；布尔使用 `<stdbool.h>` 的 `bool`。
 - 使用 `float` 运算时为对应常量加 `f`；是否需要 `double` 由精度需求与目标性能决定。
 - 不在头文件中定义可变全局对象；优先通过实例和接口交互，不暴露内部状态供跨模块任意修改。
 - 输入只读时使用 `const`。数组接口说明长度、容量、所有权和生命周期。
-- 错误使用具名枚举或已约定的返回类型；不能把错误和有效测量值混用。
-- 指针参数的可空性、未初始化行为、错误时输出是否有效，必须写明并与实现一致。
+- 新增自维护函数默认直接返回计算结果，或使用 `void`；只有用户明确要求时才增加函数状态
+  返回值。不默认创建 `FilterResult_e` 等结果枚举，也不以错误哨兵冒充有效测量值。
+- 简单、高频计算优先使用类型明确的 `static inline`，跨文件使用的内联定义放在头文件中；
+  循环处理和通道分发保留在 `.c`。内联是优化建议，实际展开与耗时由目标编译器和测量确认。
+- 对简单底层计算，以 Doxygen `@pre` 明确有效指针、数组容量、参数范围及调用方责任，
+  不默认叠加运行时检查、初始化状态机或失败回滚。调用方必须满足前置条件。
+- 已有 HAL 等厂商接口按原契约使用。只有已明确要求状态返回的接口才规定错误码及失败输出，
+  不把新规则用于删除现有硬件调用的返回值检查。
 - 不默认使用 `volatile` 解决并发；中断共享、原子性、临界区和数据一致性需单独设计。
 - 结构体紧凑布局仅在协议/存储格式确有要求时使用，并说明对齐和端序，不全局套用 `pack(1)`。
 - 普通函数式宏须加括号并避免重复求值副作用；优先使用清晰的类型化函数。
@@ -141,7 +149,7 @@ switch(module->state)
 `@return` 或 `@retval`。只填写适用信息，不为 `void` 函数编造返回值。
 源文件不重复整段接口注释；说明实现原理、公式、取舍和局部限制。
 
-结构体成员可用 `/**< 含义、单位与范围 */`，枚举成员说明状态或错误意义。
+结构体成员可用 `/**< 含义、单位与范围 */`，枚举成员说明各自语义；通道索引注明物理量单位。
 参数注释写清“什么量”，不能只重复参数名。
 
 说明性示例，非已实现接口或实际硬件阈值：
@@ -150,14 +158,17 @@ switch(module->state)
 /**
  * @brief 将电压采样值转换为物理量。
  * @param[in] raw_count ADC 原始计数，有效范围由已确认的采样分辨率决定。
- * @param[out] voltage_v 换算电压，单位 V；必须指向有效可写对象。
- * @return 返回值约定见接口所属模块的结果枚举。
- * @note 换算比例必须来自当前板卡的已确认参数，错误时输出有效性需在正式接口中定义。
+ * @param[in] ratio 转换系数，单位 V/计数，数值来源须在正式接口中确认。
+ * @return 换算电压，单位 V。
+ * @pre 参数处于正式接口约定的范围内，浮点中间值及结果可表示。
+ * @note 此类简单计算直接返回数值，不增加函数状态返回值。
  */
 ```
 
 正式代码不能保留上述说明性示例中的未决契约；参数未确认时先记录问题，不假装完成实现。
-完整、可独立编译的注释与接口示例见 `templates/module_template.h`。
+实际无状态计算示例见 `User/Algorithm/filter.h`、`User/Bsp/adc_convert.h`。
+`templates/module_template.h` 保留为明确需要状态返回时的特定示例，不能作为新模块默认结构；
+本轮不改写模板或其现有接口。
 
 ### 原理、边界与验证
 
