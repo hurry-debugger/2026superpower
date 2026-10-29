@@ -1,7 +1,7 @@
 # 自维护固件目录
 
-当前已有整数平均、浮点低通和 ADC 物理量换算模块，已登记 Keil 构建分组及头文件路径，
-尚未接入运行流程或中断调度。
+当前已有整数平均、浮点低通，以及 UID 匹配、手填校准记录和 ADC 统一换算模块，已登记 Keil。
+启动时已接入 UID 匹配、拟合及功率输出启动门槛；平均、换算及低通的周期调度尚未接入。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
 
@@ -10,17 +10,52 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # 已有 myadc.c/.h：板级通道及标称换算
+├── Bsp/          # UID.c/.h、adc_calibration_record.c/.h、adccalibration.c/.h
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
 
 App、Config 尚为规划；按实际模块需要并获批后再创建，不预先堆放空实现。
-C/H 在模块目录中配对存放，文件名小写下划线。新模块可以从 `templates/module_template.c/.h`
+C/H 在模块目录中配对存放，文件名小写下划线；UID.c/.h 为用户指定命名例外。
+新模块可以从 `templates/module_template.c/.h`
 提炼结构，但其中的状态接口仅供明确需要状态返回的场景；简单计算直接返回数值或使用 void。
 
 App 可依赖 Bsp、Algorithm 和 Config；Bsp 不反向包含 App；Algorithm 不依赖 HAL。
 更复杂的协议或控制拆分在后续方案中明确，不把旧工程目录原样复制进来。
+
+## 手填记录与启动校准
+
+只需在 `main` 的启动区域调用一次 `UID_MatchCalibration()`，无参数、无返回值。
+它在 `UID.c` 中读取完整 UID，唯一匹配记录，调用 `AdcCalibration_Init(id)` 并发布全局状态。
+`g_adc_calibration_state` 唯一定义在 UID.c，extern 与完整类型在 adccalibration.h 中声明，
+其他模块包含该头文件后只读；不能自行修改问题位或有效掩码来允许控制。
+
+校准流程不需要脚本或 Excel：
+
+1. 查看全局状态的 `uid.word[0..2]`，按相同字序填写记录中的三个 uint32_t。
+2. 在 `adc_calibration_record.h` 增加枚举 ID，放在 `SUPERCAP_COUNT` 之前；
+   在对应 .c 数组使用 `[SUPERCAP_ID_XX]` 指定下标。01 标签对应下标 0。
+3. 每路按 `ADC_CAL_RAW_ROW(通道)` 填平均 ADC 计数，允许小数；按
+   `ADC_CAL_REAL_ROW(通道)` 填仪表实测 V/A，同列为一组。计数定义应与实际采集平均一致，
+   不先用理论公式换成 V/A；电流保留正负号。
+4. 默认每路固定 5 点，缺失位置保留显式 `NAN`；计数和实测值均可能合法为零。
+   C 会把省略的元素补零，程序无法将其与真实零值区分，因此必须保留完整模板逐项替换。
+   调整 `ADC_CAL_POINT_COUNT` 后同步填写每路全部位置，不使用零方差数据。
+5. 重新编译、烧录同一固件；启动时以中心化最小二乘计算 `gain`、`bias`，之后不再拟合。
+
+记录结构只有 UID 和 `[5通道 * 2行][固定点数]` 数组两个成员。全零 UID 槽位不参与匹配。
+当前模板没有真实 UID 或采集数据，默认不启动功率输出。更换 MCU 后重新绑定，更换采样电阻、
+放大器等模拟前端后重新校准。拟合后的数值校验不等于实板精度验收；不预设残差合格阈值。
+
+无记录或重复匹配使用理论值供观察；有记录时有效通道缓存拟合系数，失败通道保留理论值。
+全局状态记录当前 UID、超电 ID、板卡问题、每通道问题位及有效通道掩码。NAN 缺失、其他
+非有限值、计数越界、零方差、非正增益、数值溢出分别报告，不静默丢弃坏点继续拟合。
+负 Bias 合法。只有 `board_errors == 0U` 且有效掩码为 `ADC_CAL_ALL_CHANNELS_MASK` 才允许
+main 启动功率输出；无匹配记录和任一通道失败均禁止控制。
+
+main 先禁用输出，再匹配拟合；保留 ADC 硬件自校准、DMA 和采样触发计数器启动。
+这是启动门槛，不包含运行期测量故障关断。再次匹配或拟合只能在功率输出关闭、消费者尚未
+运行时进行；不能与中断换算并发。初始化后状态和系数保持只读，不默认使用 volatile。
 
 ## 平均后转换
 
@@ -36,7 +71,7 @@ ADC1 含 10 次四通道扫描，共 40 个半字；ADC2 含 10 次单通道采�
 
 ```c
 #include "filter.h"
-#include "myadc.h"
+#include "adccalibration.h"
 
 #define FEEDBACK_SAMPLE_COUNT (10U)
 #define FEEDBACK_ADC1_STRIDE (4U)
@@ -58,13 +93,16 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
     }
     adc_raw[V_CAP] = Filter_AverageU16(adc2_samples, FEEDBACK_SAMPLE_COUNT,
                                      FEEDBACK_ADC2_STRIDE);
-    Myadc_Convert(adc_raw, adc_convert);
+    AdcCalibration_Convert(adc_raw, adc_convert);
 }
 ```
 
-`Myadc_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
+`AdcCalibration_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
+返回地址不代表校准成功；无有效校准时结果仅供观察，不能作为允许控制的依据。
 平均支持其他非零次数与步长；采用 uint32_t 累加、四舍五入到整数计数。
-换算比例、偏置及硬件基础参数集中在 `Bsp/myadc.h`，当前为未标定的标称值。
+硬件理论参数在 `Bsp/adccalibration.h`。统一公式为 `raw_count * gain + bias`，
+理论偏置为 `-offset_count * ratio`，拟合偏置直接来自实测数据，不再扣一次零点。
+`AdcCalibration_ConvertValue()` 的第三参数单位为 V/A，与旧计数零点接口不同。
 
 ## 可选浮点低通
 
@@ -79,7 +117,7 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
 /**
  * @brief 更新调用方保存的各通道物理量历史，首次直接使用当前换算值。
  * @pre 两个数组均有 ADC_CHANNEL_COUNT 个元素，alpha 有效；非首次时历史已初始化。
- * @note 与上例共用 filter.h 和 myadc.h，固定反馈周期调用。
+ * @note 与上例共用 filter.h 和 adccalibration.h，固定反馈周期调用。
  */
 void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
                       float adc_lowpass[ADC_CHANNEL_COUNT], float alpha, bool first_block)
@@ -100,9 +138,9 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
-两个 `.c` 已加入 `MDK-ARM/2026superpower.uvprojx` 的对应分组，两个 `.h` 作为头文件登记，
-并配置 `User/Algorithm`、`User/Bsp` 头文件路径；本轮仅完成构建登记，未执行固件构建。
-所有函数实现放在 `.c`，头文件只保留声明、类型和宏；没有新增 DMA、HRTIM 或回调调用。
+filter 及三个 Bsp 模块的 C/H 已登记 `MDK-ARM/2026superpower.uvprojx`，沿用现有
+`User/Algorithm`、`User/Bsp` 包含目录；未执行固件构建。所有函数实现在 `.c`，头文件
+只保留声明、类型和宏。没有新增 DMA、平均调度或反馈回调。
 
 ## 与生成工程的边界
 

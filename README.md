@@ -22,16 +22,22 @@
 
 ## 当前实现
 
-依据当前文件静态读取：`Core/Src/main.c` 初始化 GPIO、DMA、HRTIM1 和 ADC1/ADC2，随后校准
-两个 ADC，分别启动长度为 4 和 1 的循环 DMA，再调用 HRTIM 主计数器、A/B 定时器及对应输出
-启动函数；主循环为空。新增的四次校准和 DMA 启动调用均检查返回值，失败进入 `Error_Handler()`。
+依据当前文件静态读取：`Core/Src/main.c` 初始化 GPIO、DMA、HRTIM1 和 ADC1/ADC2，先禁用
+四路功率输出，再调用无参 `UID_MatchCalibration()` 匹配记录并在启动阶段拟合五路系数。
+随后执行两个 ADC 硬件自校准、4/1 元素循环 DMA 及 HRTIM 主/A/B 计数器启动，相关 HAL
+返回值均检查；只有全局状态无板卡问题、五路拟合全部有效才启动四路功率输出。主循环为空。
 `adc1_raw` 对应通道 1、3、5、12，`adc2_raw` 对应通道 2，仅保存原始计数供调试器观察。
 `User/Algorithm/filter.c/.h` 已提供带步长的整数平均和浮点低通，
-`User/Bsp/myadc.c/.h` 已提供通道枚举、参数宏、通用计算及 `Myadc_Convert()` 数组转换。
+`User/Bsp/UID.c/.h` 提供完整 UID 匹配与全局 `g_adc_calibration_state`；
+`adc_calibration_record.c/.h` 保存手填 UID 和二维采集数组；
+`adccalibration.c/.h` 合并理论换算、启动拟合和 `AdcCalibration_Convert()` 数组转换。
 调用顺序为整数平均 → `adc_raw[通道]` → `adc_convert[通道]` → 可选浮点低通，
-调用示例见 [User/README.md](User/README.md)。两个模块已登记 Keil 分组及头文件路径，
-全部函数实现在 `.c` 中，尚未接入运行流程；模板不参与固件构建。
-采样链路尚未上板验证，未实现功率闭环、保护状态机或温度换算。
+调用示例和记录填写方法见 [User/README.md](User/README.md)。全部 C/H 已登记 Keil，
+函数实现在 `.c` 中；模板不参与构建。当前仅有全零 UID、NAN 采集点的待填记录，因此
+默认不启动功率输出。无记录或失败通道仍可用理论值观察，不能据此允许控制。
+无需 Python/Excel 等校准工具；直接填写 C 记录、重新编译烧录，启动时自动计算系数。
+尚未接入完整采样块、平均调度或反馈环，未实现运行期故障关断、功率闭环、温度换算，
+采样链路及功率输出电气状态尚未上板验证。
 
 ## 目录
 
@@ -43,7 +49,7 @@
 ├── Core/                # CubeMX 生成代码，仅获批 USER CODE 内部可编辑
 ├── Drivers/             # 厂商驱动与 CMSIS
 ├── MDK-ARM/             # Keil 工程、启动与生成文件
-├── User/                # Algorithm 滤波、Bsp 换算及调用说明，已登记构建
+├── User/                # Algorithm 滤波、Bsp UID/记录/校准及调用说明
 ├── docs/                # 架构、规范、状态、决策、硬件与测试
 ├── templates/           # 独立模块模板，不参与固件构建
 ├── tools/               # 只读规范检查及其测试

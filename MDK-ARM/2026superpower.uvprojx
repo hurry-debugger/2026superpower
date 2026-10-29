@@ -895,14 +895,34 @@
           <GroupName>Application/User/Bsp</GroupName>
           <Files>
             <File>
-              <FileName>myadc.c</FileName>
+              <FileName>adccalibration.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../User/Bsp/myadc.c</FilePath>
+              <FilePath>../User/Bsp/adccalibration.c</FilePath>
             </File>
             <File>
-              <FileName>myadc.h</FileName>
+              <FileName>adccalibration.h</FileName>
               <FileType>5</FileType>
-              <FilePath>../User/Bsp/myadc.h</FilePath>
+              <FilePath>../User/Bsp/adccalibration.h</FilePath>
+            </File>
+            <File>
+              <FileName>UID.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/UID.c</FilePath>
+            </File>
+            <File>
+              <FileName>UID.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/UID.h</FilePath>
+            </File>
+            <File>
+              <FileName>adc_calibration_record.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/adc_calibration_record.c</FilePath>
+            </File>
+            <File>
+              <FileName>adc_calibration_record.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/adc_calibration_record.h</FilePath>
             </File>
           </Files>
         </Group>

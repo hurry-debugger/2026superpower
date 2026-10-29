@@ -25,6 +25,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "UID.h"
+#include "adccalibration.h"
 
 /* USER CODE END Includes */
 
@@ -35,6 +37,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/** @brief TA1/TA2/TB1/TB2 四路功率输出，仅在完整校准后允许启动。 */
+#define SUPERPOWER_POWER_OUTPUT_MASK \
+    (HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2)
 
 /* USER CODE END PD */
 
@@ -107,6 +112,17 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
     /**
+     * @brief 启动时先禁用功率输出，再唯一匹配 UID 并拟合五路记录。
+     * @note 无记录或任一路无效仍保留采样供观察；不允许启动功率输出。
+     */
+    if(HAL_HRTIM_WaveformOutputStop(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    UID_MatchCalibration();
+
+    /**
      * @brief 在主线程中先校准两个单端 ADC，再准备 DMA 等待 HRTIM 外部触发。
      * @note 任一步骤失败均停止启动流程；成功后才启动下方的 HRTIM。
      */
@@ -130,15 +146,30 @@ int main(void)
         Error_Handler();
     }
 
-  HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER);
+    /** @brief 保留采样触发计数器，输出仅在五路拟合全部有效时使能。 */
+    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER) != HAL_OK)
+    {
+        Error_Handler();
+    }
 
-  HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_A);
-  HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1|HRTIM_OUTPUT_TA2);
-  	
-  HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_B);
-  HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TB1|HRTIM_OUTPUT_TB2);
+    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_A) != HAL_OK)
+    {
+        Error_Handler();
+    }
 
+    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_B) != HAL_OK)
+    {
+        Error_Handler();
+    }
 
+    if(g_adc_calibration_state.board_errors == 0U
+       && g_adc_calibration_state.valid_channel_mask == ADC_CAL_ALL_CHANNELS_MASK)
+    {
+        if(HAL_HRTIM_WaveformOutputStart(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
+        {
+            Error_Handler();
+        }
+    }
 
 //	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = 10880;
   /* USER CODE END 2 */
