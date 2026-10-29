@@ -1,6 +1,7 @@
 # 自维护固件目录
 
-当前已有整数平均、浮点低通，以及 UID 匹配、手填校准记录和 ADC 统一换算模块，已登记 Keil。
+当前已有整数平均、浮点低通，以及 UID 匹配、手填校准记录、ADC 统一换算和 HRTIM 输出模块，
+均已登记 Keil；HRTIM 输出模块尚未接入运行。
 启动时已接入 UID 匹配、拟合及功率输出启动门槛；平均、换算及低通的周期调度尚未接入。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
@@ -10,7 +11,7 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # UID.c/.h、adc_calibration_record.c/.h、adccalibration.c/.h
+├── Bsp/          # UID、adc_calibration_record、adccalibration、bsp_hrtim 的 C/H
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
@@ -138,9 +139,74 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
-filter 及三个 Bsp 模块的 C/H 已登记 `MDK-ARM/2026superpower.uvprojx`，沿用现有
+filter 及三个 ADC 相关 Bsp 模块的 C/H 已登记 `MDK-ARM/2026superpower.uvprojx`，沿用现有
 `User/Algorithm`、`User/Bsp` 包含目录；未执行固件构建。所有函数实现在 `.c`，头文件
 只保留声明、类型和宏。没有新增 DMA、平均调度或反馈回调。
+
+## HRTIM 广义占空比底层模块
+
+`Bsp/bsp_hrtim.c/.h` 已提供四个 `void` 接口并登记 Keil；尚未在 main 中调用。
+当前 HRTIM 预装载和复位更新仍关闭，不能直接调用占空比更新接口运行本板。
+
+| 接口 | 职责与限制 |
+| --- | --- |
+| `BspHrtim_Init()` | 关闭四路输出，恢复非中间模式；不启动计数器、不改外设配置和比较值 |
+| `BspHrtim_SetGeneralizedDuty(g)` | 限幅、模式迟滞、占空比分配和 CMP1/CMP2 预装载写入；不自动开启输出 |
+| `BspHrtim_EnableOutput()` | 统一开启 TA1/TA2/TB1/TB2；允许开启的依据由调用方检查 |
+| `BspHrtim_DisableOutput()` | 统一关闭四路输出；保留计数器、比较值和迟滞状态 |
+
+`g` 为理想电容侧电压/底盘侧电压，无单位，允许大于 1，必须是有限正数，
+随后限幅到 0.05～10。零、负数、NaN 和无穷不属于支持输入，关断须使用独立接口。
+这不是电流方向命令；应用层负责闭环、反馈有效性和校准门槛，Bsp 不读取 ADC 状态。
+启停 HAL 返回值失败时进入既有 Error_Handler()；接口不新增状态返回值。
+
+本板原理图第 3 页确定 Timer A 接电容侧、Timer B 接底盘侧；CH1 均接下管，CH2 均接上管。
+定义上管占空比 `D_chassis` 和 `D_cap`，理想比例为 `g = D_chassis / D_cap`。
+中间模式使用 `D_chassis = 0.4 * (g + 1)`、`D_cap = 0.4 * (1 / g + 1)`；
+其余模式按下表分配：
+
+| 条件 | 底盘侧上管 D_chassis | 电容侧上管 D_cap |
+| --- | --- | --- |
+| g < 1 | 0.9 * g | 0.9 |
+| g >= 1 | 0.9 | 0.9 / g |
+
+初始为非中间模式，在 `0.9 < g < 1.111` 时进入中间模式；在 `g < 0.8` 或 `g > 1.25`
+时退出。进入边界等于 0.9/1.111 时不进入，退出边界等于 0.8/1.25 时仍保留中间模式。
+完整分配策略和全部数值来源是港科 RM2024 配套 `PowerManager.cpp` 的 `updatePWM()`；
+进入阈值 0.9/1.111 来自源码，不能称为开源报告正文提供的参数。
+它们是用户批准沿用的参考初值，不是本板已验证的额定范围、保护阈值或最小脉宽。
+
+CH1 的中心窗口是下管脉宽，故 `CMP1 = round(P * D_upper / 2)`、`CMP2 = P - CMP1`；
+Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期寄存器。
+先在局部算完四个值，再临时禁止 A/B 预装载传输、完整写入并恢复原更新禁止位。
+其他 CR1 位保持原值；CMP3、输出事件来源、周期、死区、相位及计数器均不改写。
+这里的上管占空比是理想值，未补偿正死区、驱动延迟与计数量化，不保证实测电压比。
+
+### 后续 CubeMX 配置前提
+
+以下是后续单独审批和操作 CubeMX 时的要求，本轮没有执行或重新生成：
+
+- Timer A/B：`PreloadEnable = HRTIM_PRELOAD_ENABLED`、
+  `ResetUpdate = HRTIM_TIMUPDATEONRESET_ENABLED`、
+  `UpdateGating = HRTIM_UPDATEGATING_INDEPENDENT`。
+- Timer A/B：`UpdateTrigger = HRTIM_TIMUPDATETRIGGER_NONE`、
+  `RepetitionUpdate = HRTIM_UPDATEONREPETITION_DISABLED`；不引入其他自动更新来源，
+  调用方不触发 A/B 软件更新。由各自复位/回卷事件装载新值。
+- 主/A/B 保持相同且固定的周期、向上连续计数。当前周期为 21760 计数，
+  A 由主周期复位，B 由主 CMP1=10880 复位，保留半周期错相。
+- 保留 CH1 在 CMP1 置位、CMP2 复位，CH2 正死区互补、四路高有效及 CMP3 ADC 触发。
+  当前正死区升降沿值均为 15，仍须核对器件、脉宽及实板波形，不能据此声称足够。
+
+两侧分别在下一次自身复位/回卷时生效，相差半周期；不承诺 A/B 同时切换。
+只有一个调用上下文持有 A/B 比较值、更新禁止位及模块私有模式状态，调用不可重入，
+不与其他 HRTIM 公共寄存器或 HAL 句柄写入并发；运行期两次设置至少间隔一个完整 PWM 周期。
+临时禁止装载不是全局临界区，也不提供任意中断抢占关断的故障保护能力。
+
+后续接入顺序为：完成并核对 CubeMX 配置 → MX_HRTIM1_Init() → BspHrtim_Init() →
+准备采样并依据实际反馈确定启动 g → SetGeneralizedDuty(g) → 启动计数器并至少运行一个
+完整 PWM 周期 → 确认两侧装载、完整 ADC 校准及其他启动条件 → EnableOutput()。
+计数器由调用方管理；已运行时也须从最近一次设置后等待一个完整周期再开启输出。
+应用层周期调用设置函数，停机使用 DisableOutput()。本段是接入契约，不是已运行的代码。
 
 ## 与生成工程的边界
 

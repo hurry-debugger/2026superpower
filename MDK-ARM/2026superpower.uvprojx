@@ -889,9 +889,6 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>::CMSIS</GroupName>
-        </Group>
-        <Group>
           <GroupName>Application/User/Bsp</GroupName>
           <Files>
             <File>
@@ -924,6 +921,16 @@
               <FileType>5</FileType>
               <FilePath>../User/Bsp/adc_calibration_record.h</FilePath>
             </File>
+            <File>
+              <FileName>bsp_hrtim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/bsp_hrtim.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_hrtim.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/bsp_hrtim.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -940,6 +947,9 @@
               <FilePath>../User/Algorithm/filter.h</FilePath>
             </File>
           </Files>
+        </Group>
+        <Group>
+          <GroupName>::CMSIS</GroupName>
         </Group>
       </Groups>
     </Target>
