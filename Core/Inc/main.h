@@ -69,6 +69,11 @@ void Error_Handler(void);
 #define I_BAT_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+/** @brief 三选一编译模式；只取消一行注释，power_ctrl.c 检查互斥。 */
+/* #define POWER_CTRL_MATCH */
+#define POWER_CTRL_NO_REFEREE
+/* #define POWER_CTRL_OPEN_LOOP */
+
 
 /* USER CODE END Private defines */
 

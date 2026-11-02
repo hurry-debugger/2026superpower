@@ -1,25 +1,18 @@
 /**
  * @file adccalibration.c
+ * @note 校准算法归属 User/Calibration；UID 与记录数据仍由 Bsp 提供。
  * @brief 启动时拟合五路采集记录，统一使用缓存增益和偏置进行物理量换算。
  * @note 拟合失败的通道仅保留理论值供观察；是否启动控制由全局状态门槛决定。
  */
 
 #include "adccalibration.h"
 
+#include "power_ctrl_config.h"
+
 #include <float.h>
 #include <math.h>
 
 /* ==================== 私有数据 ==================== */
-
-/** @brief 图纸标称系数，偏置单位 V/A，由计数零点乘增益并取负得到。 */
-static const AdcCalibrationCoeff_t s_theory_coefficients[ADC_CHANNEL_COUNT] =
-{
-    [V_CHASSIS] = {ADC_V_CHASSIS_RATIO, -ADC_V_CHASSIS_OFFSET_COUNT * ADC_V_CHASSIS_RATIO},
-    [V_BAT] = {ADC_V_BAT_RATIO, -ADC_V_BAT_OFFSET_COUNT * ADC_V_BAT_RATIO},
-    [I_BAT] = {ADC_I_BAT_RATIO, -ADC_I_BAT_OFFSET_COUNT * ADC_I_BAT_RATIO},
-    [I_CHASSIS] = {ADC_I_CHASSIS_RATIO, -ADC_I_CHASSIS_OFFSET_COUNT * ADC_I_CHASSIS_RATIO},
-    [V_CAP] = {ADC_V_CAP_RATIO, -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO}
-};
 
 /** @brief 启动时更新，消费者运行后只读；未调用初始化也可用理论值观察。 */
 static AdcCalibrationCoeff_t s_coefficients[ADC_CHANNEL_COUNT] =
@@ -29,6 +22,16 @@ static AdcCalibrationCoeff_t s_coefficients[ADC_CHANNEL_COUNT] =
     [I_BAT] = {ADC_I_BAT_RATIO, -ADC_I_BAT_OFFSET_COUNT * ADC_I_BAT_RATIO},
     [I_CHASSIS] = {ADC_I_CHASSIS_RATIO, -ADC_I_CHASSIS_OFFSET_COUNT * ADC_I_CHASSIS_RATIO},
     [V_CAP] = {ADC_V_CAP_RATIO, -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO}
+};
+
+/** @brief 直接复用控制配置的物理量上限；电压单位 V，电流单位 A。 */
+static const float s_value_limits[ADC_CHANNEL_COUNT] =
+{
+    [V_CHASSIS] = POWER_CTRL_CHASSIS_OVERVOLTAGE_V,
+    [V_BAT] = POWER_CTRL_CHASSIS_OVERVOLTAGE_V,
+    [I_BAT] = POWER_CTRL_CAP_CURRENT_MAX_A,
+    [I_CHASSIS] = POWER_CTRL_CAP_CURRENT_MAX_A,
+    [V_CAP] = POWER_CTRL_CAP_OVERVOLTAGE_V
 };
 
 /* ==================== 私有接口声明 ==================== */
@@ -54,10 +57,22 @@ AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id)
         .supercap_id = SUPERCAP_ID_UNKNOWN
     };
 
-    for(uint32_t channel = 0U; channel < ADC_CHANNEL_COUNT; channel++)
-    {
-        s_coefficients[channel] = s_theory_coefficients[channel];
-    }
+    /* 每次初始化先恢复理论值，避免失败通道沿用上次校准系数。 */
+    s_coefficients[V_CHASSIS].gain = ADC_V_CHASSIS_RATIO;
+    s_coefficients[V_CHASSIS].bias =
+        -ADC_V_CHASSIS_OFFSET_COUNT * ADC_V_CHASSIS_RATIO;
+    s_coefficients[V_BAT].gain = ADC_V_BAT_RATIO;
+    s_coefficients[V_BAT].bias =
+        -ADC_V_BAT_OFFSET_COUNT * ADC_V_BAT_RATIO;
+    s_coefficients[I_BAT].gain = ADC_I_BAT_RATIO;
+    s_coefficients[I_BAT].bias =
+        -ADC_I_BAT_OFFSET_COUNT * ADC_I_BAT_RATIO;
+    s_coefficients[I_CHASSIS].gain = ADC_I_CHASSIS_RATIO;
+    s_coefficients[I_CHASSIS].bias =
+        -ADC_I_CHASSIS_OFFSET_COUNT * ADC_I_CHASSIS_RATIO;
+    s_coefficients[V_CAP].gain = ADC_V_CAP_RATIO;
+    s_coefficients[V_CAP].bias =
+        -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO;
 
     if(supercap_id == SUPERCAP_ID_UNKNOWN)
     {
@@ -75,15 +90,12 @@ AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id)
 
     for(uint32_t channel = 0U; channel < ADC_CHANNEL_COUNT; channel++)
     {
-        AdcCalibrationCoeff_t coefficient;
-        uint32_t errors = AdcCalibration_FitChannel(
-            &g_adc_calibration_records[supercap_id], (AdcChannel_e)channel, &coefficient);
+        state.channel_errors[channel] = AdcCalibration_FitChannel(
+            &g_adc_calibration_records[supercap_id], (AdcChannel_e)channel,
+            &s_coefficients[channel]);
 
-        state.channel_errors[channel] = errors;
-
-        if(errors == ADC_CAL_CHANNEL_ERR_NONE)
+        if(state.channel_errors[channel] == ADC_CAL_CHANNEL_ERR_NONE)
         {
-            s_coefficients[channel] = coefficient;
             state.valid_channel_mask |= 1U << channel;
         }
     }
@@ -116,40 +128,38 @@ static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
 {
     const float *raw = record->calibration_data[ADC_CAL_RAW_ROW(channel)];
     const float *real = record->calibration_data[ADC_CAL_REAL_ROW(channel)];
-    uint32_t errors = ADC_CAL_CHANNEL_ERR_NONE;
+    const float min_value = (channel == I_BAT || channel == I_CHASSIS)
+                                ? -s_value_limits[channel] : 0.0f;
+    float raw_min = (float)ADC_FULL_SCALE_COUNT;
+    float raw_max = 0.0f;
     double raw_sum = 0.0;
     double real_sum = 0.0;
 
     for(uint32_t point = 0U; point < ADC_CAL_POINT_COUNT; point++)
     {
-        if(isnan(raw[point]) || isnan(real[point]))
+        /* 必须落在闭区间内；NaN 和无穷也会被范围比较拒绝。 */
+        if(!(raw[point] >= 0.0f && raw[point] <= (float)ADC_FULL_SCALE_COUNT))
         {
-            errors |= ADC_CAL_CHANNEL_ERR_MISSING_POINT;
+            return ADC_CAL_CHANNEL_ERR_COUNT_RANGE;
         }
 
-        if((!isfinite(raw[point]) && !isnan(raw[point]))
-           || (!isfinite(real[point]) && !isnan(real[point])))
+        if(!(real[point] >= min_value && real[point] <= s_value_limits[channel]))
         {
-            errors |= ADC_CAL_CHANNEL_ERR_NONFINITE;
+            return ADC_CAL_CHANNEL_ERR_VALUE_RANGE;
         }
 
-        if(isfinite(raw[point])
-           && (raw[point] < 0.0f || raw[point] > (float)ADC_FULL_SCALE_COUNT))
+        if(raw[point] < raw_min)
         {
-            errors |= ADC_CAL_CHANNEL_ERR_COUNT_RANGE;
+            raw_min = raw[point];
         }
 
-        if(isfinite(raw[point]) && isfinite(real[point]))
+        if(raw[point] > raw_max)
         {
-            raw_sum += (double)raw[point];
-            real_sum += (double)real[point];
+            raw_max = raw[point];
         }
-    }
 
-    /* 不丢弃坏点继续拟合；先收齐当前通道可判断的数据问题。 */
-    if(errors != ADC_CAL_CHANNEL_ERR_NONE)
-    {
-        return errors;
+        raw_sum += (double)raw[point];
+        real_sum += (double)real[point];
     }
 
     double raw_mean = raw_sum / (double)ADC_CAL_POINT_COUNT;
@@ -174,43 +184,33 @@ static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
     double gain = covariance / raw_variance;
     double bias = real_mean - gain * raw_mean;
 
-    if(!isfinite(gain) || !isfinite(bias))
+    /*
+     * 运行保护峰值只约束实际校准区间内的拟合极值，不约束量程外推值。
+     * 全 ADC 量程仅检查 float 可表示性，避免窄区间产生的异常斜率溢出。
+     * 结果集中在此校验，通过后才窄化并更新缓存系数。
+     */
+    double fitted_min = (double)raw_min * gain + bias;
+    double fitted_max = (double)raw_max * gain + bias;
+    double full_scale_product = (double)ADC_FULL_SCALE_COUNT * gain;
+    double full_scale_value = full_scale_product + bias;
+
+    if(!(fabs(full_scale_product) <= (double)FLT_MAX
+         && fabs(bias) <= (double)FLT_MAX && fabs(full_scale_value) <= (double)FLT_MAX))
     {
         return ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE;
     }
-
-    if(gain <= 0.0)
+    else if((float)gain <= 0.0f)
     {
-        errors |= ADC_CAL_CHANNEL_ERR_GAIN_NONPOSITIVE;
+        /* 同时拒绝窄化后下溢为零的增益。 */
+        return ADC_CAL_CHANNEL_ERR_GAIN_NONPOSITIVE;
+    }
+    else if(!(fabs(fitted_min) <= (double)s_value_limits[channel]
+              && fabs(fitted_max) <= (double)s_value_limits[channel]))
+    {
+        return ADC_CAL_CHANNEL_ERR_VALUE_RANGE;
     }
 
-    if(fabs(gain) > (double)FLT_MAX || fabs(bias) > (double)FLT_MAX)
-    {
-        errors |= ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE;
-    }
-
-    if(errors != ADC_CAL_CHANNEL_ERR_NONE)
-    {
-        return errors;
-    }
-
-    AdcCalibrationCoeff_t fitted = {(float)gain, (float)bias};
-
-    if(!isfinite(fitted.gain) || fitted.gain <= 0.0f || !isfinite(fitted.bias))
-    {
-        return ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE;
-    }
-
-    /* 强制分别落到 float，防止乘法溢出被后续负偏置抵消而漏检。 */
-    volatile float full_scale_product = (float)ADC_FULL_SCALE_COUNT * fitted.gain;
-    volatile float full_scale_value = full_scale_product + fitted.bias;
-    volatile float zero_value = 0.0f * fitted.gain + fitted.bias;
-
-    if(!isfinite(full_scale_product) || !isfinite(full_scale_value) || !isfinite(zero_value))
-    {
-        return ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE;
-    }
-
-    *coefficient = fitted;
+    coefficient->gain = (float)gain;
+    coefficient->bias = (float)bias;
     return ADC_CAL_CHANNEL_ERR_NONE;
 }

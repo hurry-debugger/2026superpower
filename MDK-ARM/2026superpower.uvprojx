@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32G474xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Drivers/CMSIS/Include;../User/Bsp;../User/Algorithm</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Drivers/CMSIS/Include;../User/Bsp;../User/Algorithm;../User/App;../User/Config;../User/Calibration</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -892,16 +892,6 @@
           <GroupName>Application/User/Bsp</GroupName>
           <Files>
             <File>
-              <FileName>adccalibration.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../User/Bsp/adccalibration.c</FilePath>
-            </File>
-            <File>
-              <FileName>adccalibration.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>../User/Bsp/adccalibration.h</FilePath>
-            </File>
-            <File>
               <FileName>UID.c</FileName>
               <FileType>1</FileType>
               <FilePath>../User/Bsp/UID.c</FilePath>
@@ -931,6 +921,26 @@
               <FileType>5</FileType>
               <FilePath>../User/Bsp/bsp_hrtim.h</FilePath>
             </File>
+            <File>
+              <FileName>bsp_adc_feedback.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/bsp_adc_feedback.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_adc_feedback.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/bsp_adc_feedback.h</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_referee_data.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Bsp/bsp_referee_data.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_referee_data.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Bsp/bsp_referee_data.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -945,6 +955,56 @@
               <FileName>filter.h</FileName>
               <FileType>5</FileType>
               <FilePath>../User/Algorithm/filter.h</FilePath>
+            </File>
+            <File>
+              <FileName>pid.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Algorithm/pid.c</FilePath>
+            </File>
+            <File>
+              <FileName>pid.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Algorithm/pid.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Application/User/App</GroupName>
+          <Files>
+            <File>
+              <FileName>power_ctrl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/App/power_ctrl.c</FilePath>
+            </File>
+            <File>
+              <FileName>power_ctrl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/App/power_ctrl.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Application/User/Config</GroupName>
+          <Files>
+            <File>
+              <FileName>power_ctrl_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Config/power_ctrl_config.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Application/User/Calibration</GroupName>
+          <Files>
+            <File>
+              <FileName>adccalibration.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../User/Calibration/adccalibration.c</FilePath>
+            </File>
+            <File>
+              <FileName>adccalibration.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../User/Calibration/adccalibration.h</FilePath>
             </File>
           </Files>
         </Group>

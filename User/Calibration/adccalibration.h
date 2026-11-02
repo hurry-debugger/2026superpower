@@ -1,5 +1,6 @@
 /**
  * @file adccalibration.h
+ * @note 文件归属 User/Calibration；引用者沿用同名头文件及新增包含路径。
  * @brief 超级电容板的理论换算、启动拟合、校准状态及统一物理量换算。
  * @details 参数依据用户提供的 Super-capacitor control.pdf 第 3～5 页，
  *          INA240A2 增益同时核对 TI 手册；图纸与实板一致性及标定仍待验证。
@@ -66,6 +67,7 @@ extern "C"
 /** @brief 底盘电流零点，单位计数；允许与电池通道分别标定。 */
 #define ADC_I_CHASSIS_OFFSET_COUNT (ADC_I_CHASSIS_ZERO_V * ADC_FULL_SCALE_COUNT / ADC_REFERENCE_V)
 
+
 /** @brief 所有通道均拟合有效的掩码，仅用于校准状态，不代表采样新鲜度。 */
 #define ADC_CAL_ALL_CHANNELS_MASK ((1U << ADC_CHANNEL_COUNT) - 1U)
 
@@ -87,16 +89,21 @@ typedef enum
     ADC_CAL_BOARD_ERR_INVALID_ID = 1U << 2     /**< 初始化参数超出记录下标范围。 */
 } AdcCalibrationBoardError_e;
 
-/** @brief 每路采集数据及拟合问题位，可同时记录多个原因。 */
+/**
+ * @brief 每路采集数据及拟合问题位。
+ * @note 输入按计数范围或物理量范围归类，首个坏点即返回。
+ *       MISSING_POINT、NONFINITE 仅保留原数值，当前范围检查不单独发布这两个问题位。
+ */
 typedef enum
 {
     ADC_CAL_CHANNEL_ERR_NONE = 0U,
     ADC_CAL_CHANNEL_ERR_MISSING_POINT = 1U << 0,  /**< NAN 表示缺失的采集值。 */
     ADC_CAL_CHANNEL_ERR_NONFINITE = 1U << 1,      /**< 存在其他非有限采集值。 */
-    ADC_CAL_CHANNEL_ERR_COUNT_RANGE = 1U << 2,    /**< 计数超出 [0,4095]。 */
+    ADC_CAL_CHANNEL_ERR_COUNT_RANGE = 1U << 2,    /**< 计数未落在 [0,4095]，含非有限值。 */
     ADC_CAL_CHANNEL_ERR_ZERO_VARIANCE = 1U << 3,  /**< 所有 ADC 计数相同。 */
     ADC_CAL_CHANNEL_ERR_GAIN_NONPOSITIVE = 1U << 4, /**< 增益非正，方向不符合当前定义。 */
-    ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE = 1U << 5   /**< 计算、float 系数或中间值不可表示。 */
+    ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE = 1U << 5,  /**< 系数或换算中间值不可由 float 表示。 */
+    ADC_CAL_CHANNEL_ERR_VALUE_RANGE = 1U << 6     /**< 实测值或校准区间拟合极值不满足配置上限。 */
 } AdcCalibrationChannelError_e;
 
 /** @brief UID 匹配和启动拟合状态；全部通道有效且无板卡问题才允许控制。 */
@@ -123,7 +130,9 @@ extern AdcCalibrationState_t g_adc_calibration_state;
  * @return 本次拟合状态；uid 暂为全零，由 UID.c 填入实际 UID 并发布。
  * @pre 仅在启动主线程、功率输出关闭且消费者尚未运行时调用。
  * @note 不读取硬件 UID，不直接修改全局状态；有效通道缓存拟合系数，其他通道
- *       保留理论值供观察。只做明确无效项检查，不保证实板精度或允许误差。
+ *       保留理论值供观察。输入与校准区间拟合极值直接复用 power_ctrl_config.h
+ *       中的峰值；电池电压共用底盘上限，两路电流共用电容电流上限。
+ *       校准区间以外仅检查换算的 float 可表示性，不保证实板精度或允许误差。
  */
 AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id);
 

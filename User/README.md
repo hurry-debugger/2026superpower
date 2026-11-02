@@ -1,7 +1,7 @@
 # 自维护固件目录
 
-当前已有整数平均、浮点低通，以及 UID 匹配、手填校准记录、ADC 统一换算和 HRTIM 输出模块，
-均已登记 Keil；HRTIM 输出模块尚未接入运行。
+当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
+采样发布、裁判发布及控制任务尚未接入运行；不得把模块登记当成已启动保护。
 启动时已接入 UID 匹配、拟合及功率输出启动门槛；平均、换算及低通的周期调度尚未接入。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
@@ -11,12 +11,13 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # UID、adc_calibration_record、adccalibration、bsp_hrtim 的 C/H
+├── Bsp/          # UID、记录、HRTIM、采样及裁判数据发布
+├── Calibration/  # adccalibration.c/.h，校准算法及理论换算
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
 
-App、Config 尚为规划；按实际模块需要并获批后再创建，不预先堆放空实现。
+App、Config、Calibration 已登记构建；Calibration 迁移保留原有 AdcCalibration 接口。
 C/H 在模块目录中配对存放，文件名小写下划线；UID.c/.h 为用户指定命名例外。
 新模块可以从 `templates/module_template.c/.h`
 提炼结构，但其中的状态接口仅供明确需要状态返回的场景；简单计算直接返回数值或使用 void。
@@ -101,7 +102,7 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
 `AdcCalibration_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
 返回地址不代表校准成功；无有效校准时结果仅供观察，不能作为允许控制的依据。
 平均支持其他非零次数与步长；采用 uint32_t 累加、四舍五入到整数计数。
-硬件理论参数在 `Bsp/adccalibration.h`。统一公式为 `raw_count * gain + bias`，
+硬件理论参数在 `Calibration/adccalibration.h`。统一公式为 `raw_count * gain + bias`，
 理论偏置为 `-offset_count * ratio`，拟合偏置直接来自实测数据，不再扣一次零点。
 `AdcCalibration_ConvertValue()` 的第三参数单位为 V/A，与旧计数零点接口不同。
 
@@ -140,7 +141,7 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
 filter 及三个 ADC 相关 Bsp 模块的 C/H 已登记 `MDK-ARM/2026superpower.uvprojx`，沿用现有
-`User/Algorithm`、`User/Bsp` 包含目录；未执行固件构建。所有函数实现在 `.c`，头文件
+`User/Algorithm`、`User/Bsp`、`User/Calibration` 包含目录；未执行固件构建。所有函数实现在 `.c`，头文件
 只保留声明、类型和宏。没有新增 DMA、平均调度或反馈回调。
 
 ## HRTIM 广义占空比底层模块
@@ -216,3 +217,94 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 启动和回调可在对应的 USER CODE 区域内接入，仍须先列出具体修改清单并获批。
 后续新增或重命名 C/H 必须把 Keil 分组与头文件路径维护纳入同一清单；
 本目录说明不单独授权写文件或添加运行时调用。
+
+## 应用层控制与后续接入
+
+`App/power_ctrl.c/.h` 提供 `PowerCtrl_Init(void)`、`PowerCtrl_Task(void)`，
+主要实现依次为 Init、Task、ModeSwitch、LoopCalcu。Init 内按 Taurus 形式逐环调用
+PID_Init，先清零实例；原 PID 计算代码保持，死区为 0，不启用电机堵转检测。
+误差恰为零仍输出零、增量式 Ki=0 清零的原行为保留。
+
+### 编译模式与配置
+
+在 `Core/Inc/main.h` 的 USER CODE Private defines 中用注释三选一：
+
+| 宏 | 行为 |
+| --- | --- |
+| POWER_CTRL_MATCH | 有效裁判数据进入 45 J 能量环；裁判超过 300 ms 未更新则保护 |
+| POWER_CTRL_NO_REFEREE | 默认选择，固定功率初值 80 W，自动启动；允许接口设为负功率 |
+| POWER_CTRL_OPEN_LOOP | 手动 g，不计算 PID；本地使能初始关闭，电容达到 29 V 禁止输出 |
+
+`Config/power_ctrl_config.h` 集中保存参数。PARAMETERS_READY、PWM_READY 默认均为 0，
+Task、采样发布、PWM 的周期（us）以及全部 PID 系数也是待填模板；填写及接入完成后
+再开启对应就绪标志。Task 必须唯一、周期固定且不短于完整 PWM 周期。
+所有闭环每个 Task 计算一次；系数按调用次数定义，不在库中自动乘除 dt。
+
+### 数据与调用上下文
+
+`BspAdcFeedback_Publish(adc_convert, valid, now_ms)` 发布五路稳定物理量，
+`BspRefereeData_Publish(power_limit_w, buffer_energy_j, now_ms)` 发布有效裁判值。
+数据分别唯一定义在所属 BSP .c；其他模块 extern 读取，按约定禁止直接赋值。
+更新与 Task 必须在同一串行上下文执行，不允许中断异步写入；volatile 不提供一致性。
+Publish/Invalidate 不访问 HAL，不接管 DMA、平均、低通、UART 或协议校验。
+
+将来运行调用顺序：完整校准 → Bsp 数据发布 → PowerCtrl_Init（硬件初始化完成后）→
+周期内先发布采样/已解析裁判，再 PowerCtrl_Task。单调毫秒时基使用 HAL_GetTick，
+发布参数 now_ms 必须与它同源。每次 Task 按序号判断是否更新，序号未变时累计配置的
+控制周期 us；超过两倍发布周期，在第一个超时的控制调用中检出。毫秒时间戳另查长时间
+陈旧数据。不能在丢失调度后用虚假的固定周期继续调用；实时调度与执行预算待验证。
+
+本轮 main 没有接入这些调用，仍保留原来的直接输出启动代码；接入控制时必须一起移除
+其他输出写入者、完成预装载配置，不能只添加 Task。当前校准记录仍为待填模板。
+
+### 控制关系
+
+- 能量环 P_raw=P_limit-PID_energy；全局放电下限 -450 W，再由当前 15*Vcap W
+  收缩上下限，上限同时不超过 P_limit。PID 修正限值允许大于 P_limit，使负目标可达。
+- 功率反馈是 V_CHASSIS*I_CHASSIS，正值充电、负值放电；功率位置环输出端口目标电流。
+- 目标电流对称限幅 ±15*Vcap/Vchassis；不设置 5 V 禁充禁放或 4 A 固定限制。
+- 电容超过 26.1 V 时电压环以 29 V 为目标，输出非负充电上限；达到 29 V 禁止正目标，
+  仍可放电。30 V 是独立硬故障阈值。计量和功率模型不能代替电容实测过流保护。
+- g=Vcap/Vchassis+电流位置 PID 修正。最终饱和及电压竞争阻止同向积分，内环饱和
+  向功率/能量外环传播；App 包装预查计算溢出，PID 库计算本身不修改。
+- App 只调用 BspHrtim 接口；逻辑 A/chassis 对应本板 Timer B，电容对应 Timer A。
+  电机回馈升高底盘电压时限流随当前 Vchassis 更新，另有底盘过压保护；不是母线稳压环。
+
+### 三状态与故障时间
+
+上电 PROTECT_MODE；条件有效后 RESTART_MODE 等待连续正常 500 ms；保持输出关闭并
+设置实际电压比，然后再等待 ceil(PWM周期us/1000)+1 个毫秒 tick，覆盖写入时刻的相位。
+最后进入 CTRL_MODE。等待或装载准备期间失效立即回到 PROTECT，清零等待及环路历史。
+已有连续故障位不会因为无效采样被误清除。故障检测与关断只能在 Task 上下文运行，
+不是异步硬件紧急保护；保护响应延迟还包括采样、调度、计算及 HAL 执行时间。
+
+| 条件 | 触发 | 恢复 |
+| --- | --- | --- |
+| Vcap>30 V | 连续 10 次 Task | Vcap<=30 V |
+| Vchassis>43 V | 连续 1 次 Task | Vchassis<33 V |
+| Vbat<10 V | 连续 10 次 Task | Vbat>=10 V |
+| 裁判超时 | 上场无有效数据或超过 300 ms | 新的有效数据 |
+| 校准/采样/数值/配置异常 | 本次检查不满足 | 原因消除并重新等待 |
+
+上述 10/1/10 是用户批准的控制周期数，不是毫秒。计数条件成立时饱和递增，
+不成立时清零；已置位按恢复条件解除。不会继续使用旧版 CAP_MIN_V=7.5 V 故障。
+
+### 参考工程计时核查（静态配置，不是实板测量）
+
+港科 RM2024 `Core/Src/main.c:133-150`：8 MHz HSE /1 *9=72 MHz，APB1 /2，
+定时器时钟乘2回到72 MHz；`Core/Src/tim.c:121-123`：PSC=7199、ARR=9，
+T=(7199+1)*(9+1)/72MHz=1 ms。`PowerManager.cpp:1014-1018` 的 TIM2 IRQ
+调用 handleErrorState；563-599 行故障时反复置 restartCoolDown=500，无故障递减，
+减为零后的下一次调用允许输出，名义约500 ms（存在一个调度边界），并非当前Task周期。
+本工程独立选用500 ms单调计时，不移植它的计数时钟。
+
+旧工程 `Src/main.c:157-175`：16 MHz /4 *85 /2=170 MHz，APB1 /1；
+`Src/tim.c:113-115` 的 TIM6 PSC=169、ARR=1999，周期2 ms。
+`Src/stm32g4xx_it.c:360-365` 调用 power_ctrl_task；其中 power_error_check_advanced
+在 app/power_ctrl_task.c:42 被注释，故旧保护检测不能称为实际启用。
+若恢复该调用，381-429 行计数及大于10/1的判断单位是调用次数，首次置位在第11/2次，
+分别名义22/4 ms，而不是10/1 ms。TIM7 的电流计算周期是20 us，也不是保护检测周期。
+旧版重启计数由同一2 ms任务推动，且故障时不清零，不能照搬其500次为500 ms。
+
+本轮按用户指示删除 `tools/test_adc_feedback.py`；旧测试说明中的对应命令已不适用。
+未执行专项测试、固件构建或上板验证。PID 预查使用 double，其目标执行时间待测量。
