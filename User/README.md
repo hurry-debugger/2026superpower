@@ -1,8 +1,8 @@
 # 自维护固件目录
 
 当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
-采样发布、裁判发布及控制任务尚未接入运行；不得把模块登记当成已启动保护。
-启动时已接入 UID 匹配、拟合及功率输出启动门槛；平均、换算及低通的周期调度尚未接入。
+采样发布、裁判串口接收/解析与控制任务已接入调度；配置与参数门槛仍禁止未就绪输出。
+启动保留UID匹配及拟合，Master接入十次平均和换算，不启用可选低通；上板验证待完成。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
 
@@ -11,19 +11,21 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # UID、记录、HRTIM、采样及裁判数据发布
-├── Calibration/  # adccalibration.c/.h，校准算法及理论换算
+├── Bsp/          # UID、HRTIM、采样发布及裁判 USART 接收
+├── Calibration/  # 校准记录、拟合算法及理论换算
+├── Procotol/     # USART/CAN BSP、超电协议、裁判类型、CRC 与解析（沿用拼写）
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
 
-App、Config、Calibration 已登记构建；Calibration 迁移保留原有 AdcCalibration 接口。
+App、Config、Calibration、Procotol 已登记构建；校准记录 C/H 从 Bsp 移至 Calibration，
+内容与原有 AdcCalibration 接口不变。
 C/H 在模块目录中配对存放，文件名小写下划线；UID.c/.h 为用户指定命名例外。
 新模块可以从 `templates/module_template.c/.h`
 提炼结构，但其中的状态接口仅供明确需要状态返回的场景；简单计算直接返回数值或使用 void。
 
-App 可依赖 Bsp、Algorithm 和 Config；Bsp 不反向包含 App；Algorithm 不依赖 HAL。
-更复杂的协议或控制拆分在后续方案中明确，不把旧工程目录原样复制进来。
+App 可依赖 Bsp、Algorithm、Config 和 Procotol；Bsp 的接收封装调用 Procotol，
+不反向包含 App。Algorithm 与 Procotol 不依赖 HAL；串口硬件访问仅在 Bsp 中。
 
 ## 手填记录与启动校准
 
@@ -68,7 +70,7 @@ main 先禁用输出，再匹配拟合；保留 ADC 硬件自校准、DMA 和采
 
 以下为应用层接入示例，尚未添加到固件。输入必须是稳定的完整采样块：
 ADC1 含 10 次四通道扫描，共 40 个半字；ADC2 含 10 次单通道采样，共 10 个半字。
-当前 `main.c` 的 4/1 元素缓冲区不能直接作为本示例输入。
+实际采样已移入bsp_adc_feedback的80/20元素循环DMA；下例仅解释平均与换算调用。
 调用方负责两路块的对应关系和处理期间不被 DMA 覆盖；不可通过去掉 volatile 强行满足契约。
 
 ```c
@@ -140,14 +142,16 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
-filter 及三个 ADC 相关 Bsp 模块的 C/H 已登记 `MDK-ARM/2026superpower.uvprojx`，沿用现有
-`User/Algorithm`、`User/Bsp`、`User/Calibration` 包含目录；未执行固件构建。所有函数实现在 `.c`，头文件
-只保留声明、类型和宏。没有新增 DMA、平均调度或反馈回调。
+filter、Bsp/UID、Calibration 和运行模块均已登记 Keil。实际采集由 bsp_adc_feedback 管理，
+每路 DMA 环分为两个十次扫描半块：ADC1[80]、ADC2[20]。HAL 半满/全满回调复制非活动半块，
+以有效标记和序号发布稳定槽；Master 只处理同序完整两路块。回调检查 CNDTR、HT/TC 标志和
+次序，积压/覆盖/错序/ADC错误锁存故障，不靠继续独立计数恢复配对。仅停止计数器和输出后
+共同初始化可恢复。Master 十次整数平均、校准换算后发布；没有新块不重复发布，不增加低通。
 
 ## HRTIM 广义占空比底层模块
 
-`Bsp/bsp_hrtim.c/.h` 已提供四个 `void` 接口并登记 Keil；尚未在 main 中调用。
-当前 HRTIM 预装载和复位更新仍关闭，不能直接调用占空比更新接口运行本板。
+`Bsp/bsp_hrtim.c/.h` 已提供四个 `void` 接口并登记 Keil；由 PowerCtrlTask 启动、PowerCtrl 唯一调用输出接口。
+当前 CubeMX 已开启 A/B 预装载和复位更新；波形、死区、自举刷新仍待上板验证。
 
 | 接口 | 职责与限制 |
 | --- | --- |
@@ -183,9 +187,9 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 其他 CR1 位保持原值；CMP3、输出事件来源、周期、死区、相位及计数器均不改写。
 这里的上管占空比是理想值，未补偿正死区、驱动延迟与计数量化，不保证实测电压比。
 
-### 后续 CubeMX 配置前提
+### CubeMX 配置与运行前提
 
-以下是后续单独审批和操作 CubeMX 时的要求，本轮没有执行或重新生成：
+以下为用户本轮通过 CubeMX 生成后核对的要求；代理不直接改写生成配置：
 
 - Timer A/B：`PreloadEnable = HRTIM_PRELOAD_ENABLED`、
   `ResetUpdate = HRTIM_TIMUPDATEONRESET_ENABLED`、
@@ -203,11 +207,10 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 不与其他 HRTIM 公共寄存器或 HAL 句柄写入并发；运行期两次设置至少间隔一个完整 PWM 周期。
 临时禁止装载不是全局临界区，也不提供任意中断抢占关断的故障保护能力。
 
-后续接入顺序为：完成并核对 CubeMX 配置 → MX_HRTIM1_Init() → BspHrtim_Init() →
-准备采样并依据实际反馈确定启动 g → SetGeneralizedDuty(g) → 启动计数器并至少运行一个
-完整 PWM 周期 → 确认两侧装载、完整 ADC 校准及其他启动条件 → EnableOutput()。
-计数器由调用方管理；已运行时也须从最近一次设置后等待一个完整周期再开启输出。
-应用层周期调用设置函数，停机使用 DisableOutput()。本段是接入契约，不是已运行的代码。
+运行顺序为：先关闭输出、完成 UID/拟合及 ADC 硬件校准，再 PowerCtrlTask_Init，
+其中 PowerCtrl_Init 调用 BspHrtim_Init，准备 DMA/通信后一次启动三计数器。
+状态机只在完整有效反馈和参数就绪后预装载占空比，至少等待完整 PWM 装载期限，
+再决定是否开启输出；main 不再直接开启四路输出。此处是源码调用关系，非硬件运行记录。
 
 ## 与生成工程的边界
 
@@ -218,7 +221,7 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 后续新增或重命名 C/H 必须把 Keil 分组与头文件路径维护纳入同一清单；
 本目录说明不单独授权写文件或添加运行时调用。
 
-## 应用层控制与后续接入
+## 应用层控制与运行接入
 
 `App/power_ctrl.c/.h` 提供 `PowerCtrl_Init(void)`、`PowerCtrl_Task(void)`，
 主要实现依次为 Init、Task、ModeSwitch、LoopCalcu。Init 内按 Taurus 形式逐环调用
@@ -235,27 +238,44 @@ PID_Init，先清零实例；原 PID 计算代码保持，死区为 0，不启�
 | POWER_CTRL_NO_REFEREE | 默认选择，固定功率初值 80 W，自动启动；允许接口设为负功率 |
 | POWER_CTRL_OPEN_LOOP | 手动 g，不计算 PID；本地使能初始关闭，电容达到 29 V 禁止输出 |
 
-`Config/power_ctrl_config.h` 集中保存参数。PARAMETERS_READY、PWM_READY 默认均为 0，
-Task、采样发布、PWM 的周期（us）以及全部 PID 系数也是待填模板；填写及接入完成后
-再开启对应就绪标志。Task 必须唯一、周期固定且不短于完整 PWM 周期。
+`Config/power_ctrl_config.h` 集中保存参数。
+Task、采样发布、PWM 周期分别为40/40/4 μs，PWM_READY=1；
+PARAMETERS_READY=0和全部PID系数仍为待填模板，不代表已具备闭环参数。Task 必须唯一、周期固定且不短于完整 PWM 周期。
 所有闭环每个 Task 计算一次；系数按调用次数定义，不在库中自动乘除 dt。
 
 ### 数据与调用上下文
 
-`BspAdcFeedback_Publish(adc_convert, valid, now_ms)` 发布五路稳定物理量，
-`BspRefereeData_Publish(power_limit_w, buffer_energy_j, now_ms)` 发布有效裁判值。
-数据分别唯一定义在所属 BSP .c；其他模块 extern 读取，按约定禁止直接赋值。
-更新与 Task 必须在同一串行上下文执行，不允许中断异步写入；volatile 不提供一致性。
-Publish/Invalidate 不访问 HAL，不接管 DMA、平均、低通、UART 或协议校验。
+`BspAdcFeedback_Publish(adc_convert, valid, now_ms)` 发布五路稳定物理量。
+裁判数据由 `Procotol/prot_judge.c` 中的 `judge_get_data(data, rx_len, now_ms)`
+解析并唯一定义；控制直接读取 `robot_status.chassis_power_limit`（W）与
+`power_heat_data.buffer_energy`（J），原 BspRefereeData 发布模块已删除。
+两类报文分别使用 `g_judge_robot_status_rx`、`g_judge_power_heat_rx` 保存有效性和时间，
+启动时均无效；上场模式要求两者都收到且分别不超过 300 ms，坏帧不刷新时间。
+两个取值均为协议 uint16_t，天然有限且非负，不再使用旧浮点中转对象。
+协议更新和 Task 都由 Master 串行执行；UART IRQ 只停止接收并移交长度，不解析协议。
+Master 顺序为 USER_UART_Process → BspAdcFeedback_Process → PowerCtrl_Task。
+USART/RX DMA IRQ 尚 active、前台恢复或等待恢复时跳过 UART Process，避免 HAL 句柄重入。
+每次 Task 按反馈发布序号检查微秒级停更，超过两倍40 μs发布周期时检出；
+毫秒时间另用于长时间陈旧检查。所有错误检测仍在25 kHz控制中断内。
+Master 发现下一次 MREP 已到达时立即关断并锁存执行超时，直至重新 Init，不补跑遗漏周期。
+Timer A 无业务回调；Timer B 每1 ms取一致快照并发送CAN。当前校准记录仍为待填模板。
 
-将来运行调用顺序：完整校准 → Bsp 数据发布 → PowerCtrl_Init（硬件初始化完成后）→
-周期内先发布采样/已解析裁判，再 PowerCtrl_Task。单调毫秒时基使用 HAL_GetTick，
-发布参数 now_ms 必须与它同源。每次 Task 按序号判断是否更新，序号未变时累计配置的
-控制周期 us；超过两倍发布周期，在第一个超时的控制调用中检出。毫秒时间戳另查长时间
-陈旧数据。不能在丢失调度后用虚假的固定周期继续调用；实时调度与执行预算待验证。
+### 裁判协议与仅接收 USART
 
-本轮 main 没有接入这些调用，仍保留原来的直接输出启动代码；接入控制时必须一起移除
-其他输出写入者、完成预装载配置，不能只添加 Task。当前校准记录仍为待填模板。
+CRC、协议类型与 28 种命令分发源自 Taurus-arm/user/Procotol/judge；保留源字段、
+命令号、长度及小端紧凑布局，不据此宣称已核验官方协议版本或 ARMCC 位域兼容性。
+解析入口只访问实际 rx_len 范围，依次检查帧头 CRC8、完整帧 CRC16、命令载荷长度和
+目标结构体大小；迭代支持单次缓冲区内多帧，不跨批次重组半帧。
+返回 0 表示至少成功发布一帧已知报文，返回 1 表示未发布；输入字节不被修改。
+源 map_data_t 实际为 105 字节，而 LEN_map_data 为 103；两者原样保留，
+0x0307 因布局不一致被拒绝发布，待依据协议版本单独确认。控制使用的两类报文不受影响。
+
+Procotol/bsp_usart.c/.h 仅接收裁判，绑定已生成的 USART1 / DMA1_Channel3 普通 RX DMA。
+USART IRQ 在原 HAL IRQ 前处理空闲，使用 HAL_UART_AbortReceive_IT，终止完成才发布稳定长度；
+满150字节也会移交。Master 解析后非阻塞重启，运行失败请求主循环 USER_UART_Recover。
+恢复时前台拥有 HAL 句柄，暂时关闭 UART/RX DMA IRQ；所有权释放和 IRQ 恢复在短临界区完成。
+接收存在间隙、不跨批次拼帧；处理时刻不是硬件到达时刻，最坏150字节解析耗时仍待测量。
+裁判两个有效时间只由成功解析对应报文更新，串口恢复不刷新它们。
 
 ### 控制关系
 
@@ -308,3 +328,30 @@ T=(7199+1)*(9+1)/72MHz=1 ms。`PowerManager.cpp:1014-1018` 的 TIM2 IRQ
 
 本轮按用户指示删除 `tools/test_adc_feedback.py`；旧测试说明中的对应命令已不适用。
 未执行专项测试、固件构建或上板验证。PID 预查使用 double，其目标执行时间待测量。
+
+## 经典 CAN 通信
+
+Procotol/bsp_can 适配 Taurus 的 Fdcanx_Init/Fdcanx_Transmit，仅使用 FDCAN1。
+双ID过滤单个0x010，拒绝不匹配、扩展和远程帧；接收经典标准数据帧DLC为1～8，
+短帧补零后交回调。发送固定8字节，忙或失败只计数丢弃，不等待和重试。
+初始化回调先注册再启用通知和启动；RX单次最多读硬件FIFO深度3帧。
+
+| ID | 数据 |
+| --- | --- |
+| TX 0x100 | bytes0～3电容电压V、bytes4～7底盘电流A，小端IEEE754 binary32 |
+| TX 0x101 | byte0旧故障位，byte1旧状态，bytes2～7固定零 |
+| RX 0x010 | byte0底盘模式，1在全部模式请求保护，非1解除后重新等待500 ms |
+
+旧故障位仅映射bit0电容过压、bit2底盘过压、bit3电池欠压、bit7裁判故障。
+旧状态为CTRL=0、PROTECT=1、RESTART=2，与内部枚举编号不同，不能直接复制内部状态。
+其他内部故障只通过PROTECT反映，旧故障字节无法表达完整错误；不新增CAN失联保护。
+Timer B在保存/恢复PRIMASK的短临界区复制电压、电流、错误和状态，编码和HAL发送在临界区外。
+底层发送取自Taurus，线上格式取自用户指定旧SuperCap2026_7_17；不导入旧控制阈值或FD路径。
+
+## 调度配置与验证边界
+
+Master/B重复计数分别9/249，中断请求分别MREP/REP；A无业务请求。
+NVIC：Master=0，ADC DMA=1，B=2，USART/UART DMA/FDCAN=3，SysTick=15。
+PowerCtrlTask_Init静态运行核对实际周期、请求、预装载和优先级；不符合时保持停机，
+由g_power_ctrl_task.configuration_ready观察。g_supercap_can记录底盘模式及发送忙/失败次数。
+采样、数值、远程保护、500 ms恢复、CAN帧和最坏40 μs执行时间均待上板验证。

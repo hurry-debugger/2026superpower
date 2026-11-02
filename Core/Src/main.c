@@ -20,13 +20,17 @@
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
+#include "fdcan.h"
 #include "hrtim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "UID.h"
 #include "adccalibration.h"
+#include "power_ctrl_task.h"
+#include "bsp_usart.h"
 
 /* USER CODE END Includes */
 
@@ -51,18 +55,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
-/**
- * @brief ADC1 循环 DMA 原始计数，顺序为通道 1、3、5、12，范围 0～4095。
- * @note DMA 在采样时更新，供调试器观察；volatile 不保证四通道的一致快照。
- */
-static volatile uint16_t adc1_raw[4];
-
-/**
- * @brief ADC2 循环 DMA 原始计数，对应通道 2，范围 0～4095。
- * @note DMA 在采样时更新，供调试器观察。
- */
-static volatile uint16_t adc2_raw[1];
 
 /* USER CODE END PV */
 
@@ -110,68 +102,26 @@ int main(void)
   MX_HRTIM1_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
+  MX_USART1_UART_Init();
+  MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
-    /**
-     * @brief 启动时先禁用功率输出，再唯一匹配 UID 并拟合五路记录。
-     * @note 无记录或任一路无效仍保留采样供观察；不允许启动功率输出。
-     */
+    /** @brief 启动先关断输出；运行期启停仅由 PowerCtrl 管理。 */
     if(HAL_HRTIM_WaveformOutputStop(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
     {
         Error_Handler();
     }
-
     UID_MatchCalibration();
-
-    /**
-     * @brief 在主线程中先校准两个单端 ADC，再准备 DMA 等待 HRTIM 外部触发。
-     * @note 任一步骤失败均停止启动流程；成功后才启动下方的 HRTIM。
-     */
     if(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
     {
         Error_Handler();
     }
-
     if(HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
     {
         Error_Handler();
     }
 
-    if(HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc1_raw, 4) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    if(HAL_ADC_Start_DMA(&hadc2, (uint32_t *)adc2_raw, 1) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    /** @brief 保留采样触发计数器，输出仅在五路拟合全部有效时使能。 */
-    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_A) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    if(HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_TIMER_B) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    if(g_adc_calibration_state.board_errors == 0U
-       && g_adc_calibration_state.valid_channel_mask == ADC_CAL_ALL_CHANNELS_MASK)
-    {
-        if(HAL_HRTIM_WaveformOutputStart(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
-        {
-            Error_Handler();
-        }
-    }
-
-//	HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = 10880;
+    /** @brief 核对生成配置，准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */
+    PowerCtrlTask_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -181,6 +131,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+        USER_UART_Recover();
   }
   /* USER CODE END 3 */
 }

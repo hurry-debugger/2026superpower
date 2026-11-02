@@ -9,7 +9,8 @@
 #include "main.h"
 #include "power_ctrl_config.h"
 #include "bsp_adc_feedback.h"
-#include "bsp_referee_data.h"
+#include "prot_judge.h"
+#include "prot_supercap.h"
 #include "bsp_hrtim.h"
 
 #include <float.h>
@@ -30,6 +31,7 @@ static uint32_t s_now_ms;
 static uint32_t s_last_sample_sequence;
 static uint32_t s_sample_age_us;
 static bool s_sample_seen;
+static bool s_timing_fault;
 
 static void PowerCtrl_ModeSwitch(void);
 static void PowerCtrl_LoopCalcu(void);
@@ -58,6 +60,8 @@ void PowerCtrl_Init(void)
     s_restart_start_ms = 0U;
     s_preload_start_ms = 0U;
     s_sample_seen = false;
+    s_last_sample_sequence = 0U;
+    s_timing_fault = false;
     s_sample_age_us = 0U;
 
     /**
@@ -91,6 +95,14 @@ void PowerCtrl_Task(void)
     s_now_ms = HAL_GetTick();
     PowerCtrl_ModeSwitch();
     PowerCtrl_LoopCalcu();
+}
+
+void PowerCtrl_NotifyTimingFault(void)
+{
+    s_timing_fault = true;
+    s_now_ms = HAL_GetTick();
+    g_power_ctrl.errors |= POWER_CTRL_ERROR_TIMING;
+    PowerCtrl_EnterProtect();
 }
 
 /* ==================== 状态切换 ==================== */
@@ -165,19 +177,19 @@ static void PowerCtrl_LoopCalcu(void)
         * g_bsp_adc_feedback.adc_convert[I_CHASSIS];
 
 #if defined(POWER_CTRL_MATCH)
-    const float power_upper_w = fminf(g_bsp_referee_data.power_limit_w, cap_power_w);
+    const float power_upper_w = fminf(robot_status.chassis_power_limit, cap_power_w);
     PID_TypeDef energy_before = g_power_ctrl.energy_pid;
     /* 必须能输出大于裁判上限的修正，才能使 P_limit - 修正成为负功率。 */
-    g_power_ctrl.energy_pid.MaxOut = g_bsp_referee_data.power_limit_w - POWER_CTRL_POWER_MIN_W;
+    g_power_ctrl.energy_pid.MaxOut = robot_status.chassis_power_limit - POWER_CTRL_POWER_MIN_W;
     g_power_ctrl.energy_pid.IntegralLimit = g_power_ctrl.energy_pid.MaxOut;
-    PowerCtrl_CalculatePid(&g_power_ctrl.energy_pid, g_bsp_referee_data.buffer_energy_j,
+    PowerCtrl_CalculatePid(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
                   POWER_CTRL_ENERGY_TARGET_J);
     float energy_correction_w = PowerCtrl_ConstrainPid(&g_power_ctrl.energy_pid, &energy_before,
-        g_bsp_referee_data.buffer_energy_j, POWER_CTRL_ENERGY_TARGET_J,
-        g_bsp_referee_data.power_limit_w - power_upper_w,
-        g_bsp_referee_data.power_limit_w - power_lower_w);
+        power_heat_data.buffer_energy, POWER_CTRL_ENERGY_TARGET_J,
+        robot_status.chassis_power_limit - power_upper_w,
+        robot_status.chassis_power_limit - power_lower_w);
     g_power_ctrl.power_target_w = PowerCtrl_Clamp(
-        g_bsp_referee_data.power_limit_w - energy_correction_w,
+        robot_status.chassis_power_limit - energy_correction_w,
                                                 power_lower_w, power_upper_w);
 #else
     g_power_ctrl.power_target_w = PowerCtrl_Clamp(g_power_ctrl.test_power_w,
@@ -261,6 +273,10 @@ static void PowerCtrl_LoopCalcu(void)
 static void PowerCtrl_UpdateErrors(void)
 {
     uint32_t errors = POWER_CTRL_ERROR_NONE;
+    if(s_timing_fault)
+        errors |= POWER_CTRL_ERROR_TIMING;
+    if(g_supercap_can.chassis_mode == SUPERCAP_CAN_REMOTE_PROTECT)
+        errors |= POWER_CTRL_ERROR_REMOTE;
     if(!PowerCtrl_ConfigValid())
         errors |= POWER_CTRL_ERROR_CONFIG;
     if(g_adc_calibration_state.board_errors != 0U
@@ -328,14 +344,12 @@ static void PowerCtrl_UpdateErrors(void)
             | POWER_CTRL_ERROR_CHASSIS_OVERVOLTAGE | POWER_CTRL_ERROR_BAT_UNDERVOLTAGE);
     }
 #if defined(POWER_CTRL_MATCH)
-    if(!g_bsp_referee_data.valid
-       || (uint32_t)(s_now_ms - g_bsp_referee_data.update_ms) > POWER_CTRL_REFEREE_TIMEOUT_MS)
+    /* 两类报文必须分别收到且保持新鲜，不能由另一类报文刷新时间。
+     * 功率 W 与缓冲能量 J 均来自 uint16_t 字段，天然有限且非负。 */
+    if(!g_judge_robot_status_rx.valid || !g_judge_power_heat_rx.valid
+       || (uint32_t)(s_now_ms - g_judge_robot_status_rx.update_ms) > POWER_CTRL_REFEREE_TIMEOUT_MS
+       || (uint32_t)(s_now_ms - g_judge_power_heat_rx.update_ms) > POWER_CTRL_REFEREE_TIMEOUT_MS)
         errors |= POWER_CTRL_ERROR_REFEREE;
-    if(!isfinite(g_bsp_referee_data.power_limit_w) || g_bsp_referee_data.power_limit_w < 0.0f
-       || g_bsp_referee_data.power_limit_w > FLT_MAX + POWER_CTRL_POWER_MIN_W
-       || !isfinite(g_bsp_referee_data.buffer_energy_j)
-       || g_bsp_referee_data.buffer_energy_j < 0.0f)
-        errors |= POWER_CTRL_ERROR_NUMERIC;
 #elif defined(POWER_CTRL_NO_REFEREE)
     if(!isfinite(g_power_ctrl.test_power_w))
         errors |= POWER_CTRL_ERROR_NUMERIC;

@@ -7,14 +7,14 @@
 
 /** @brief PID 参数和时序填写完成后手动置 1；不代表上板验证。 */
 #define POWER_CTRL_PARAMETERS_READY (0U)
-/** @brief CubeMX 预装载及运行计数器接入完成后置 1，当前保持关闭。 */
-#define POWER_CTRL_PWM_READY (0U)
-/** @brief Task 固定周期 us；0 待配置，必须不短于 PWM 周期。 */
-#define POWER_CTRL_PERIOD_US (0U)
-/** @brief 采样整组发布周期 us；0 待配置。 */
-#define POWER_CTRL_SAMPLE_PERIOD_US (0U)
-/** @brief PWM 周期 us；0 待配置，禁止用旧板数值代替。 */
-#define POWER_CTRL_PWM_PERIOD_US (0U)
+/** @brief 本轮已静态核对 CubeMX 预装载和调度配置，不代表波形或硬件已验证。 */
+#define POWER_CTRL_PWM_READY (1U)
+/** @brief Master 固定周期 40 us，即 25 kHz；来源为本轮用户调度约定。 */
+#define POWER_CTRL_PERIOD_US (40U)
+/** @brief 250 kHz 每通道十次采样对应整组周期 40 us；发布可延后一控制周期。 */
+#define POWER_CTRL_SAMPLE_PERIOD_US (40U)
+/** @brief 当前 170 MHz * 32 / 21760 对应 PWM 周期 4 us，来源为 CubeMX 配置。 */
+#define POWER_CTRL_PWM_PERIOD_US (4U)
 
 /** @brief 用户确认的电容平均电流限值 A，理想功率换算模型。 */
 #define POWER_CTRL_CAP_CURRENT_MAX_A (15.0f)

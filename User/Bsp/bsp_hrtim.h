@@ -3,7 +3,7 @@
  * @brief 广义占空比到本板双半桥 PWM 的转换及功率输出启停接口。
  * @details 广义占空比为电容侧电压与底盘侧电压之比，无单位。
  *          Timer A 接电容侧，Timer B 接底盘侧；CH1 接下管，CH2 接上管。
- * @note 本模块尚未接入 main。须先通过 CubeMX 完成下述预装载配置，不能直接运行。
+ * @note 由 PowerCtrlTask 接入启动，PowerCtrl 唯一控制输出；须满足下述 CubeMX 前提。
  */
 
 #ifndef SUPERPOWER_BSP_HRTIM_H

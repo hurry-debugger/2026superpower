@@ -22,22 +22,24 @@
 
 ## 当前实现
 
-依据当前文件静态读取：`Core/Src/main.c` 初始化 GPIO、DMA、HRTIM1 和 ADC1/ADC2，先禁用
-四路功率输出，再调用无参 `UID_MatchCalibration()` 匹配记录并在启动阶段拟合五路系数。
-随后执行两个 ADC 硬件自校准、4/1 元素循环 DMA 及 HRTIM 主/A/B 计数器启动，相关 HAL
-返回值均检查；只有全局状态无板卡问题、五路拟合全部有效才启动四路功率输出。主循环为空。
-`adc1_raw` 对应通道 1、3、5、12，`adc2_raw` 对应通道 2，仅保存原始计数供调试器观察。
-`User/Algorithm/filter.c/.h` 已提供带步长的整数平均和浮点低通，
-`User/Bsp/UID.c/.h` 提供完整 UID 匹配与全局 `g_adc_calibration_state`；
-`adc_calibration_record.c/.h` 保存手填 UID 和二维采集数组；
-`adccalibration.c/.h` 合并理论换算、启动拟合和 `AdcCalibration_Convert()` 数组转换。
-调用顺序为整数平均 → `adc_raw[通道]` → `adc_convert[通道]` → 可选浮点低通，
-调用示例和记录填写方法见 [User/README.md](User/README.md)。全部 C/H 已登记 Keil，
-函数实现在 `.c` 中；模板不参与构建。当前仅有全零 UID、NAN 采集点的待填记录，因此
-默认不启动功率输出。无记录或失败通道仍可用理论值观察，不能据此允许控制。
-无需 Python/Excel 等校准工具；直接填写 C 记录、重新编译烧录，启动时自动计算系数。
-尚未接入完整采样块、平均调度或反馈环，未实现运行期故障关断、功率闭环、温度换算，
-采样链路及功率输出电气状态尚未上板验证。
+启动阶段先关闭四路功率输出，唯一匹配 UID 并拟合五路校准记录，然后完成两个 ADC 硬件
+自校准。PowerCtrlTask_Init 核对实际 HRTIM 时基、中断请求、预装载与优先级，准备采样和通信，
+一次启动 Master/A/B。配置不符合约定时保持停机，可观察 g_power_ctrl_task.configuration_ready。
+
+Master 每 40 μs 串行执行裁判解析、十次整数平均、校准换算、整组反馈发布和 PowerCtrl_Task。
+ADC1/ADC2 循环 DMA 为 80/20 元素，每半块为十次扫描；中断复制到稳定槽并检查覆盖、错序，
+Master 按相同序号配对，不直接平均活动 DMA 缓冲。采集故障锁存至共同重新初始化。
+Timer A 保留 PWM/ADC 触发；Timer B 每 1 ms 发送两帧经典 CAN。主循环仅处理 UART 恢复。
+
+User/Procotol 统一容纳 USART BSP、Taurus 适配 CAN BSP、裁判 CRC/解析和超电协议。
+USART1 普通 DMA 的 IDLE/满缓冲移交 Master 解析；不跨批次拼帧，仍有重启接收间隙。
+CAN 0x100 发送电容电压与底盘电流，0x101 发送旧语义故障和状态；0x010 的首字节为1时
+请求保护。主中断执行超期锁存关断；所有输出由 PowerCtrl 唯一管理。
+
+控制周期/采样周期/PWM 周期为 40/40/4 μs。CubeMX 配置已静态核对，PWM_READY=1；
+PARAMETERS_READY=0、PID 系数及全零 UID/NAN 校准记录仍待填写，默认禁止功率输出。
+反馈、闭环、保护和通信均未完成实板验证，静态接入不能证明 40 μs 最坏执行预算。
+裁判 0x0307 的源结构体105/常量103字节差异仍保留并拒绝发布，不影响控制使用的两个命令。
 
 ## 目录
 
@@ -49,7 +51,7 @@
 ├── Core/                # CubeMX 生成代码，仅获批 USER CODE 内部可编辑
 ├── Drivers/             # 厂商驱动与 CMSIS
 ├── MDK-ARM/             # Keil 工程、启动与生成文件
-├── User/                # Algorithm 滤波、Bsp UID/记录/校准及调用说明
+├── User/                # Algorithm、Bsp、Calibration、Procotol 通信层、App 与 Config
 ├── docs/                # 架构、规范、状态、决策、硬件与测试
 ├── templates/           # 独立模块模板，不参与固件构建
 ├── tools/               # 只读规范检查及其测试

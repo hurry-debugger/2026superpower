@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "2026superpower",
+            "name": "2026superpower_2026superpower",
             "includePath": [
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Core\\Inc",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\STM32G4xx_HAL_Driver\\Inc",
@@ -13,11 +13,13 @@
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\App",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\Config",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\Calibration",
+                "e:\\RoboMaster\\code\\hardware\\2026superpower\\User\\Procotol",
                 "E:\\mcu_tool\\keil5\\Keil_v5\\ARM\\ARMCC\\include",
                 "E:\\mcu_tool\\keil5\\Keil_v5\\ARM\\ARMCC\\include\\rw",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\MDK-ARM",
                 "e:\\RoboMaster\\code\\hardware\\2026superpower\\Core\\Src",
-                "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\STM32G4xx_HAL_Driver\\Src"
+                "e:\\RoboMaster\\code\\hardware\\2026superpower\\Drivers\\STM32G4xx_HAL_Driver\\Src",
+                "${default}"
             ],
             "defines": [
                 "USE_HAL_DRIVER",
@@ -81,7 +83,6 @@
                 "__ror(x,y)=0U",
                 "__schedule_barrier()=",
                 "__semihost(x,y)=0",
-                "__sev()=",
                 "__sqrt(x)=0.0",
                 "__sqrtf(x)=0.0f",
                 "__ssat(x,y)=0",

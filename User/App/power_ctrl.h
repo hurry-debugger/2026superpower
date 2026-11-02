@@ -27,7 +27,9 @@ typedef enum
     POWER_CTRL_ERROR_CALIBRATION = 1U << 4,
     POWER_CTRL_ERROR_SAMPLE = 1U << 5,
     POWER_CTRL_ERROR_CONFIG = 1U << 6,
-    POWER_CTRL_ERROR_NUMERIC = 1U << 7
+    POWER_CTRL_ERROR_NUMERIC = 1U << 7,
+    POWER_CTRL_ERROR_REMOTE = 1U << 8,
+    POWER_CTRL_ERROR_TIMING = 1U << 9
 } PowerCtrlError_e;
 
 /** @brief App 唯一写入的控制状态，其他文件按约定只读，不可重入访问。 */
@@ -68,9 +70,15 @@ void PowerCtrl_Init(void);
  * @pre 已 Init；唯一固定周期调用者，周期为 POWER_CTRL_PERIOD_US。
  *      同一上下文先完成 BSP 整组发布，再调用 Task，无异步写入。
  *      HAL_GetTick 保持单调毫秒时基；计数器运行、预装载等由集成者配置。
- * @note 只配置编译链，当前 main 未调用；PWM 装载等待按毫秒向上取整。
+ * @note Master 内先处理裁判和稳定采样，再调用本接口；PWM 装载等待按毫秒向上取整。
  */
 void PowerCtrl_Task(void);
+/**
+ * @brief Master 发现错过下一次 MREP 时立即保护，锁存至重新 Init。
+ * @pre 已 Init；仅 Master 同一串行上下文调用，不在其他中断重入。
+ * @note 立即关闭输出并复位环路，不通过恢复冷却自动清除此故障。
+ */
+void PowerCtrl_NotifyTimingFault(void);
 /** @brief 串行调试接口：设置无裁判目标 W，允许负值；无效数值触发保护。 */
 void PowerCtrl_SetTestPower(float power_w);
 /** @brief 串行调试接口：设置开环无量纲 g，必须位于 BSP 支持范围内。 */
