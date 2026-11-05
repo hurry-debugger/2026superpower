@@ -49,11 +49,11 @@ typedef struct
     float power_feedback_w; /**< chassis 端 V*I，带符号 W。 */
     float power_target_w; /**< 限制后的目标 W。 */
     float current_limit_a; /**< 15*Vcap/Vchassis，单位 A。 */
-    float current_target_a; /**< 竞争后带符号电流 A。 */
+    float current_target_a; /**< 功率环竞争限幅后的 Output，单位 A，供观测。 */
     float generalized_duty; /**< 电压比前馈加电流 PID 修正，无量纲。 */
     PID_TypeDef energy_pid;
     PID_TypeDef power_pid;
-    PID_TypeDef voltage_pid;
+    PID_TypeDef voltage_pid; /**< Output 为允许的充电电流 A，未竞争时为电流上限。 */
     PID_TypeDef current_pid;
 } PowerCtrl_t;
 
@@ -66,11 +66,14 @@ extern PowerCtrl_t g_power_ctrl;
  */
 void PowerCtrl_Init(void);
 /**
- * @brief 依次切换状态和计算控制；从 BSP 全局结构体读取反馈。
- * @pre 已 Init；唯一固定周期调用者，周期为 POWER_CTRL_PERIOD_US。
+ * @brief 每 25 kHz 周期依次累计与判断错误、切换状态、计算占空比并执行输出。
+ * @pre 必须先调用 PowerCtrl_Init；不使用初始化标志，唯一固定周期调用者。
+ *      调用周期为 POWER_CTRL_PERIOD_US，从 BSP 全局结构体读取反馈。
  *      同一上下文先完成 BSP 整组发布，再调用 Task，无异步写入。
  *      HAL_GetTick 保持单调毫秒时基；计数器运行、预装载等由集成者配置。
- * @note Master 内先处理裁判和稳定采样，再调用本接口；PWM 装载等待按毫秒向上取整。
+ * @note Master 内先处理稳定采样，再调用本接口；裁判由串口回调发布。
+ *       状态切换只修改 state，DutyCalcu 按状态执行输出动作；正常闭环单独封装。
+ *       恢复等待保持 500 ms，PWM 装载等待为周期向上取整后再多等一个毫秒 tick。
  */
 void PowerCtrl_Task(void);
 /**
@@ -83,7 +86,10 @@ void PowerCtrl_NotifyTimingFault(void);
 void PowerCtrl_SetTestPower(float power_w);
 /** @brief 串行调试接口：设置开环无量纲 g，必须位于 BSP 支持范围内。 */
 void PowerCtrl_SetOpenLoopDuty(float generalized_duty);
-/** @brief 开环测试允许开关，初始 false；关闭立即关断并回到 PROTECT。 */
+/**
+ * @brief 开环测试允许开关，初始 false；开环模式下关闭立即关断并回到 PROTECT。
+ * @pre 必须先调用 PowerCtrl_Init；与控制入口串行调用。
+ */
 void PowerCtrl_SetOpenLoopEnable(bool enable);
 
 #endif /* SUPERPOWER_POWER_CTRL_H */
