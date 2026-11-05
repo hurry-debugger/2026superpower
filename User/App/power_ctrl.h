@@ -28,28 +28,27 @@ typedef enum
     POWER_CTRL_ERROR_SAMPLE = 1U << 5,
     POWER_CTRL_ERROR_CONFIG = 1U << 6,
     POWER_CTRL_ERROR_NUMERIC = 1U << 7,
-    POWER_CTRL_ERROR_REMOTE = 1U << 8,
-    POWER_CTRL_ERROR_TIMING = 1U << 9
+    POWER_CTRL_ERROR_REMOTE = 1U << 8
 } PowerCtrlError_e;
 
-/** @brief App 唯一写入的控制状态，其他文件按约定只读，不可重入访问。 */
+/**
+ * @brief App 唯一写入的控制状态，其他文件按约定只读，不可重入访问。
+ * @note 功率反馈、目标、限流和占空比为控制计算记录，保护期间不代表全都实时更新。
+ *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
+ */
 typedef struct
 {
     PowerCtrlState_e state;
     uint32_t errors;
-    uint32_t restart_elapsed_ms;
     uint32_t cap_overvoltage_cnt;
     uint32_t chassis_overvoltage_cnt;
     uint32_t bat_undervoltage_cnt;
-    bool output_enabled;
-    bool voltage_competing;
     bool open_loop_enable;
     float test_power_w; /**< 无裁判目标 W，可为负；写入使用 SetTestPower。 */
     float open_loop_duty; /**< 无量纲，写入使用 SetOpenLoopDuty。 */
     float power_feedback_w; /**< chassis 端 V*I，带符号 W。 */
     float power_target_w; /**< 限制后的目标 W。 */
     float current_limit_a; /**< 15*Vcap/Vchassis，单位 A。 */
-    float current_target_a; /**< 功率环竞争限幅后的 Output，单位 A，供观测。 */
     float generalized_duty; /**< 电压比前馈加电流 PID 修正，无量纲。 */
     PID_TypeDef energy_pid;
     PID_TypeDef power_pid;
@@ -69,19 +68,16 @@ void PowerCtrl_Init(void);
  * @brief 每 25 kHz 周期依次累计与判断错误、切换状态、计算占空比并执行输出。
  * @pre 必须先调用 PowerCtrl_Init；不使用初始化标志，唯一固定周期调用者。
  *      调用周期为 POWER_CTRL_PERIOD_US，从 BSP 全局结构体读取反馈。
- *      同一上下文先完成 BSP 整组发布，再调用 Task，无异步写入。
+ *      初始化时 BSP 反馈无效，随后每次 ADC1 TC 先更新反馈。
+ *      同一上下文先完成 BSP 处理，再调用 Task，无异步反馈写入。
  *      HAL_GetTick 保持单调毫秒时基；计数器运行、预装载等由集成者配置。
- * @note Master 内先处理稳定采样，再调用本接口；裁判由串口回调发布。
- *       状态切换只修改 state，DutyCalcu 按状态执行输出动作；正常闭环单独封装。
+ * @note 仅 ADC1 DMA 全满回调在 Process 后调用；裁判由串口回调发布。
+ *       不检测采样停更或执行超期；调试接口须与控制串行调用。
+ *       状态切换只修改 state，DutyCalcu 按状态转换执行启停；正常闭环单独封装。
+ *       Init 先关断输出，首次进入 CTRL 才开启，进入保护先关断再复位环路。
  *       恢复等待保持 500 ms，PWM 装载等待为周期向上取整后再多等一个毫秒 tick。
  */
 void PowerCtrl_Task(void);
-/**
- * @brief Master 发现错过下一次 MREP 时立即保护，锁存至重新 Init。
- * @pre 已 Init；仅 Master 同一串行上下文调用，不在其他中断重入。
- * @note 立即关闭输出并复位环路，不通过恢复冷却自动清除此故障。
- */
-void PowerCtrl_NotifyTimingFault(void);
 /** @brief 串行调试接口：设置无裁判目标 W，允许负值；无效数值触发保护。 */
 void PowerCtrl_SetTestPower(float power_w);
 /** @brief 串行调试接口：设置开环无量纲 g，必须位于 BSP 支持范围内。 */

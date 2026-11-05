@@ -2,7 +2,8 @@
 
 当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
 采样发布、裁判串口接收/解析与控制任务已接入调度；参数及校准门槛仍禁止未就绪输出。
-启动保留UID匹配及拟合，Master接入十次平均和换算，不启用可选低通；上板验证待完成。
+启动保留UID匹配及拟合，ADC1 DMA全满中断接入十次近似平均和控制；Master发送CAN。
+不启用可选低通；上板验证待完成。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
 
@@ -24,8 +25,8 @@ C/H 在模块目录中配对存放，文件名小写下划线；UID.c/.h 为用�
 新模块可以从 `templates/module_template.c/.h`
 提炼结构，但其中的状态接口仅供明确需要状态返回的场景；简单计算直接返回数值或使用 void。
 
-App 可依赖 Bsp、Algorithm、Config 和 Procotol；Bsp 的接收封装调用 Procotol，
-不反向包含 App。Algorithm 与 Procotol 不依赖 HAL；串口硬件访问仅在 Bsp 中。
+App 可依赖 Bsp、Algorithm、Config 和 Procotol；底层模块不反向包含 App。
+Algorithm 不依赖 HAL；USART/CAN 的 HAL 封装位于 Procotol，Bsp 管理采样与功率输出。
 
 ## 手填记录与启动校准
 
@@ -55,7 +56,7 @@ App 可依赖 Bsp、Algorithm、Config 和 Procotol；Bsp 的接收封装调用 
 全局状态记录当前 UID、超电 ID、板卡问题、每通道问题位及有效通道掩码。NAN 缺失、其他
 非有限值、计数越界、零方差、非正增益、数值溢出分别报告，不静默丢弃坏点继续拟合。
 负 Bias 合法。只有 `board_errors == 0U` 且有效掩码为 `ADC_CAL_ALL_CHANNELS_MASK` 才允许
-main 启动功率输出；无匹配记录和任一通道失败均禁止控制。
+PowerCtrl 开启功率输出；无匹配记录和任一通道失败均禁止控制。
 
 main 先禁用输出，再匹配拟合；保留 ADC 硬件自校准、DMA 和采样触发计数器启动。
 这是启动门槛，不包含运行期测量故障关断。再次匹配或拟合只能在功率输出关闭、消费者尚未
@@ -63,50 +64,27 @@ main 先禁用输出，再匹配拟合；保留 ADC 硬件自校准、DMA 和采
 
 ## 平均后转换
 
-调用方持有 `uint16_t adc_raw[ADC_CHANNEL_COUNT]` 和
-`float adc_convert[ADC_CHANNEL_COUNT]`，按 `adc_raw[V_CHASSIS]`、
-`adc_convert[I_CHASSIS]` 访问。电压单位为 V，电流单位为 A。
-`adc_raw` 只表示平均后的计数；多次采样缓冲区另行命名。
+实际采集位于Bsp/bsp_adc_feedback.c：ADC1[40]为十次四通道扫描，ADC2[10]为十次单通道采样。
+两路循环DMA继续写入；CPU通过volatile读取，按ADC1步长4、ADC2步长1累加，
+使用(sum + 10 / 2) / 10四舍五入为五路uint16_t计数，再调用AdcCalibration_Convert。
+不把活动数组强转后交给要求稳定输入的Filter_AverageU16，不复制稳定槽、不配对批次。
+不等待首轮填满，允许读取期间窗口更新和两路窗口交叠，结果是近似十次平均。
 
-以下为应用层接入示例，尚未添加到固件。输入必须是稳定的完整采样块：
-ADC1 含 10 次四通道扫描，共 40 个半字；ADC2 含 10 次单通道采样，共 10 个半字。
-实际采样已移入bsp_adc_feedback的80/20元素循环DMA；下例仅解释平均与换算调用。
-调用方负责两路块的对应关系和处理期间不被 DMA 覆盖；不可通过去掉 volatile 强行满足契约。
+Process使用本次局部adc_raw，直接换算到g_bsp_adc_feedback.adc_convert，随后检查有限性。
+反馈仅包含五路物理量和valid，电压单位V、电流单位A；无发布时间或发布序号。
+valid表示数值有限且未报告采集故障，不表示校准有效，也不承诺固定批次一致。
+ADC1 TC随后同上下文调用PowerCtrl_Task；Master读取时取得一致快照。
+
+调用接口为：
 
 ```c
-#include "filter.h"
-#include "adccalibration.h"
-
-#define FEEDBACK_SAMPLE_COUNT (10U)
-#define FEEDBACK_ADC1_STRIDE (4U)
-#define FEEDBACK_ADC2_STRIDE (1U)
-
-/**
- * @brief 对完整采样块先做整数平均，再输出五路物理量。
- * @pre 两个输入块已完成采集且调用期间稳定；输出各有 ADC_CHANNEL_COUNT 个元素。
- * @note 前四个通道枚举顺序与当前 ADC1 Rank 顺序一致，ADC2 单独对应 V_CAP。
- */
-void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_samples,
-                          uint16_t adc_raw[ADC_CHANNEL_COUNT],
-                          float adc_convert[ADC_CHANNEL_COUNT])
-{
-    for(uint32_t channel = 0U; channel < FEEDBACK_ADC1_STRIDE; channel++)
-    {
-        adc_raw[channel] = Filter_AverageU16(&adc1_samples[channel], FEEDBACK_SAMPLE_COUNT,
-                                           FEEDBACK_ADC1_STRIDE);
-    }
-    adc_raw[V_CAP] = Filter_AverageU16(adc2_samples, FEEDBACK_SAMPLE_COUNT,
-                                     FEEDBACK_ADC2_STRIDE);
-    AdcCalibration_Convert(adc_raw, adc_convert);
-}
+BspAdcFeedback_Init();    /* 启动阶段，计数器未运行、输出关闭。 */
+BspAdcFeedback_Process(); /* 仅ADC1全满回调中，随后调用PowerCtrl_Task。 */
 ```
 
-`AdcCalibration_Convert()` 返回传入的 `adc_convert` 地址，无内部静态输出数组。
-返回地址不代表校准成功；无有效校准时结果仅供观察，不能作为允许控制的依据。
-平均支持其他非零次数与步长；采用 uint32_t 累加、四舍五入到整数计数。
-硬件理论参数在 `Calibration/adccalibration.h`。统一公式为 `raw_count * gain + bias`，
-理论偏置为 `-offset_count * ratio`，拟合偏置直接来自实测数据，不再扣一次零点。
-`AdcCalibration_ConvertValue()` 的第三参数单位为 V/A，与旧计数零点接口不同。
+AdcCalibration_Convert返回输出数组地址，不代表校准成功；无有效校准时结果仅供观察。
+统一公式为raw_count * gain + bias，拟合偏置直接来自实测数据，不再扣一次零点。
+AdcCalibration_ConvertValue的第三参数单位为V/A，与旧计数零点接口不同。
 
 ## 可选浮点低通
 
@@ -116,12 +94,14 @@ void Feedback_ConvertBlock(const uint16_t *adc1_samples, const uint16_t *adc2_sa
 `alpha` 由调用方按实际反馈周期选定，范围为 [0, 1]；这里不指定截止频率或默认系数。
 
 ```c
+#include "filter.h"
+#include "adccalibration.h"
 #include <stdbool.h>
 
 /**
  * @brief 更新调用方保存的各通道物理量历史，首次直接使用当前换算值。
  * @pre 两个数组均有 ADC_CHANNEL_COUNT 个元素，alpha 有效；非首次时历史已初始化。
- * @note 与上例共用 filter.h 和 adccalibration.h，固定反馈周期调用。
+ * @note 固定反馈周期调用；本示例不在固件默认采样路径中。
  */
 void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
                       float adc_lowpass[ADC_CHANNEL_COUNT], float alpha, bool first_block)
@@ -142,11 +122,10 @@ void Feedback_LowPass(const float adc_convert[ADC_CHANNEL_COUNT],
 
 如需功率，由应用层按对应端口的电压与电流计算，不增加 ADC 功率通道。
 低通会增加反馈延迟；实际系数、内联展开及 40 μs 执行预算须由目标编译器和上板测量确认。
-filter、Bsp/UID、Calibration 和运行模块均已登记 Keil。实际采集由 bsp_adc_feedback 管理，
-每路 DMA 环分为两个十次扫描半块：ADC1[80]、ADC2[20]。HAL 半满/全满回调复制非活动半块，
-以有效标记和序号发布稳定槽；Master 只处理同序完整两路块。回调检查 CNDTR、HT/TC 标志和
-次序，积压/覆盖/错序/ADC错误锁存故障，不靠继续独立计数恢复配对。仅停止计数器和输出后
-共同初始化可恢复。Master 十次整数平均、校准换算后发布；没有新块不重复发布，不增加低通。
+filter、Bsp/UID、Calibration和运行模块均已登记Keil。采集仅保留两块DMA数组与真实故障锁存。
+启动后关闭两路HT和ADC2 TC，保留ADC1 TC及两路DMA错误中断。
+HAL错误回调及Process读取两路OVR可锁存真实故障，标记反馈无效，不因活动数组更新报故障。
+采集故障只在停止计数器和输出后共同初始化清除；没有自动重启、停更或执行超期检测。
 
 ## HRTIM 广义占空比底层模块
 
@@ -209,7 +188,7 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 
 运行顺序为：先关闭输出、完成 UID/拟合及 ADC 硬件校准，再 PowerCtrlTask_Init，
 其中 PowerCtrl_Init 调用 BspHrtim_Init，准备 DMA/通信后一次启动三计数器。
-状态机只在完整有效反馈和参数就绪后预装载占空比，至少等待完整 PWM 装载期限，
+状态机只在有效反馈和参数就绪后预装载占空比，至少等待完整 PWM 装载期限，
 再决定是否开启输出；main 不再直接开启四路输出。此处是源码调用关系，非硬件运行记录。
 
 ## 与生成工程的边界
@@ -224,7 +203,7 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 ## 应用层控制与运行接入
 
 `App/power_ctrl.c/.h` 提供 `PowerCtrl_Init(void)`、`PowerCtrl_Task(void)`，
-主要实现依次为 Init、Task、ModeSwitch、LoopCalcu。Init 内按 Taurus 形式逐环调用
+主要实现依次为 Init、Task、ModeSwitch、DutyCalcu，闭环计算封装在 CascadePidCalcu。Init 内按 Taurus 形式逐环调用
 PID_Init，先清零实例；原 PID 计算代码保持，死区为 0，不启用电机堵转检测。
 误差恰为零仍输出零、增量式 Ki=0 清零的原行为保留。
 
@@ -245,20 +224,16 @@ PARAMETERS_READY=0和全部PID系数仍为待填模板，不代表已具备闭�
 
 ### 数据与调用上下文
 
-`BspAdcFeedback_Publish(adc_convert, valid, now_ms)` 发布五路稳定物理量。
-裁判数据由 `Procotol/prot_judge.c` 中的 `judge_get_data(data, rx_len, now_ms)`
-解析并唯一定义；控制直接读取 `robot_status.chassis_power_limit`（W）与
-`power_heat_data.buffer_energy`（J），原 BspRefereeData 发布模块已删除。
-两类报文分别使用 `g_judge_robot_status_rx`、`g_judge_power_heat_rx` 保存有效性和时间，
-启动时均无效；上场模式要求两者都收到且分别不超过 300 ms，坏帧不刷新时间。
-两个取值均为协议 uint16_t，天然有限且非负，不再使用旧浮点中转对象。
-协议更新和 Task 都由 Master 串行执行；UART IRQ 只停止接收并移交长度，不解析协议。
-Master 顺序为 USER_UART_Process → BspAdcFeedback_Process → PowerCtrl_Task。
-USART/RX DMA IRQ 尚 active 时跳过 UART Process，避免 Master 抢占后重入 HAL 句柄。
-每次 Task 按反馈发布序号检查微秒级停更，超过两倍40 μs发布周期时检出；
-毫秒时间另用于长时间陈旧检查。所有错误检测仍在25 kHz控制中断内。
-Master 发现下一次 MREP 已到达时立即关断并锁存执行超时，直至重新 Init，不补跑遗漏周期。
-Timer A 无业务回调；Timer B 每1 ms取一致快照并发送CAN。当前校准记录仍为待填模板。
+BspAdcFeedback_Process(void)在ADC1 DMA全满回调内更新反馈，随后执行PowerCtrl_Task。
+ADC1 DMA为优先级0，Master为1，Master只做CAN反馈，不修改控制状态。
+Task依次检查错误、切换状态、执行输出，不保存采样序号或年龄，不检测停更和执行超期。
+CAN快照仍通过短PRIMASK临界区复制两路物理量、错误和状态，编码发送允许ADC1 DMA抢占。
+Timer A/B关闭NVIC业务中断，保留PWM和ADC触发；Master每1 ms发送两帧CAN。
+调试接口须与ADC1控制串行使用，不增加调试锁或异步调用机制。
+
+裁判解析入口实际为judge_get_data(data, rx_len)，由USART回调直接调用。
+MATCH仍引用尚未声明的g_judge_robot_status_rx和g_judge_power_heat_rx；
+两类报文的独立超时和并发发布尚未完成接入，本轮保留控制侧300 ms判断，不修改通信实现。
 
 ### 裁判协议与仅接收 USART
 
@@ -272,13 +247,11 @@ CRC、协议类型与 28 种命令分发源自 Taurus-arm/user/Procotol/judge；
 
 Procotol/bsp_usart.c/.h 仅接收裁判，绑定已生成的 USART1 / DMA1_Channel3 普通 RX DMA。
 USER_UART_Init(void) 通过 JUDGE_HUART 固定裁判串口，保留 Taurus 的空闲回调、中断、初始化结构。
-USART IRQ 在原 HAL IRQ 前处理空闲，直接 HAL_UART_AbortReceive 后发布稳定长度；
-本地 G4 HAL 的 UART/DMA 终止实现没有轮询等待，不将这个结论套用于其他系列 HAL。
-普通 DMA 满150字节也会移交。仅保留待处理长度和标志，Master 解析一次后重启接收。
-错误回调终止并丢弃本批次，以零长度请求重启；失败时保留请求，下个控制周期重试，
-不重复解析旧数据。主循环不再操作 UART，不使用前台恢复、IRQ 开关或所有权标志。
-接收存在间隙、不跨批次拼帧；处理时刻不是硬件到达时刻，最坏150字节解析耗时仍待测量。
-裁判两个有效时间只由成功解析对应报文更新，串口恢复不刷新它们。
+USART IRQ在原HAL IRQ前处理IDLE，以RxXferSize减DMA剩余计数获得长度，
+调用HAL_UART_AbortReceive后直接解析并重新启动DMA；初始化也直接开启IDLE和接收DMA。
+现有错误回调停止DMA后重启；返回值处理、满缓冲路径和接收状态发布需另行核对，
+不能沿用旧文档中Master前台解析、失败重试和整组发布已经完成的描述。
+ADC1 DMA可以抢占串口解析，MATCH接入和协议并发修复不在本轮范围内。
 
 ### 控制关系
 
@@ -348,14 +321,16 @@ Procotol/bsp_can 适配 Taurus 的 Fdcanx_Init/Fdcanx_Transmit，仅使用 FDCAN
 旧故障位仅映射bit0电容过压、bit2底盘过压、bit3电池欠压、bit7裁判故障。
 旧状态为CTRL=0、PROTECT=1、RESTART=2，与内部枚举编号不同，不能直接复制内部状态。
 其他内部故障只通过PROTECT反映，旧故障字节无法表达完整错误；不新增CAN失联保护。
-Timer B在保存/恢复PRIMASK的短临界区复制电压、电流、错误和状态，编码和HAL发送在临界区外。
+Master在保存/恢复PRIMASK的短临界区复制电压、电流、错误和状态，编码和HAL发送在临界区外。
 底层发送取自Taurus，线上格式取自用户指定旧SuperCap2026_7_17；不导入旧控制阈值或FD路径。
 
 ## 调度配置与验证边界
 
-Master/B重复计数分别9/249，中断请求分别MREP/REP；A无业务请求。
-NVIC：Master=0，ADC DMA=1，B=2，USART/UART DMA/FDCAN=3，SysTick=15。
+Master底层计数250 kHz、周期4 μs，重复计数249，通过MREP产生1 kHz中断发送CAN。
+Timer A/B的NVIC关闭；当前生成配置仍保留Timer B外设REP请求，不产生CPU业务回调，代理不改配置。
+NVIC：ADC1 DMA=0，ADC2 DMA和Master=1，USART/UART DMA/FDCAN=3，SysTick=15。
 周期、请求、预装载和优先级由CubeMX配置和静态审查保证，PowerCtrlTask_Init不重复核对。
 UART固定为USART1/DMA1_Channel3普通接收，不在初始化中复查绑定和模式，UART模块为必选。
 CAN仅在BSP配置过滤器时保留容量边界检查。g_supercap_can记录底盘模式及发送忙/失败次数。
 采样、数值、远程保护、500 ms恢复、CAN帧和最坏40 μs执行时间均待上板验证。
+接受活动数组近似平均；DMA停更可能保持最后输出，超期可能合并事件并改变控制间隔，均无独立关断机制。

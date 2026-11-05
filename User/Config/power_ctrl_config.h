@@ -9,10 +9,8 @@
 #define POWER_CTRL_PARAMETERS_READY (0U)
 /** @brief 本轮已静态核对 CubeMX 预装载和调度配置，不代表波形或硬件已验证。 */
 #define POWER_CTRL_PWM_READY (1U)
-/** @brief Master 固定周期 40 us，即 25 kHz；来源为本轮用户调度约定。 */
+/** @brief ADC1 每十次四通道扫描产生 TC，控制周期 40 us，即 25 kHz。 */
 #define POWER_CTRL_PERIOD_US (40U)
-/** @brief 250 kHz 每通道十次采样对应整组周期 40 us；发布可延后一控制周期。 */
-#define POWER_CTRL_SAMPLE_PERIOD_US (40U)
 /** @brief 当前 170 MHz * 32 / 21760 对应 PWM 周期 4 us，来源为 CubeMX 配置。 */
 #define POWER_CTRL_PWM_PERIOD_US (4U)
 

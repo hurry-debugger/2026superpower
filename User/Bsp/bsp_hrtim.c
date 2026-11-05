@@ -3,7 +3,7 @@
  * @brief 本板广义占空比分配、中心对称比较值更新和四路功率输出启停。
  * @details 分配公式及迟滞初值参考港科 RM2024 PowerManager.cpp 的 updatePWM()；
  *          按本板原理图重新映射物理侧和上下管，不沿用参考工程的 Timer A/B 含义。
- * @note 参数和波形尚未上板验证；调用方须核对 CubeMX 更新配置；运行期仅 Master 持有输出和占空比。
+ * @note 参数和波形尚未上板验证；调用方须核对 CubeMX 更新配置；运行期由 PowerCtrl 在 ADC1 DMA 控制上下文管理输出和占空比。
  */
 
 #include "bsp_hrtim.h"
