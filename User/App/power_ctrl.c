@@ -457,9 +457,6 @@ static float PowerCtrl_ConstrainPid(PID_TypeDef *pid, const PID_TypeDef *before,
 static bool PowerCtrl_ConfigValid(void)
 {
     return POWER_CTRL_PARAMETERS_READY == 1U && POWER_CTRL_PWM_READY == 1U
-        && POWER_CTRL_PERIOD_US > 0U && POWER_CTRL_PWM_PERIOD_US > 0U
-        && POWER_CTRL_PERIOD_US >= POWER_CTRL_PWM_PERIOD_US
-        && POWER_CTRL_SAMPLE_PERIOD_US > 0U && POWER_CTRL_SAMPLE_PERIOD_US <= UINT32_MAX / 2U
         && isfinite(g_power_ctrl.energy_pid.Kp) && isfinite(g_power_ctrl.energy_pid.Ki)
         && isfinite(g_power_ctrl.energy_pid.Kd) && isfinite(g_power_ctrl.power_pid.Kp)
         && isfinite(g_power_ctrl.power_pid.Ki) && isfinite(g_power_ctrl.power_pid.Kd)

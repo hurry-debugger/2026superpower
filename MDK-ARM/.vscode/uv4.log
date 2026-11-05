@@ -1,8 +1,4 @@
 *** Using Compiler 'V5.06 update 6 (build 750)', folder: 'E:\mcu_tool\keil5\Keil_v5\ARM\ARMCC\Bin'
 Build target '2026superpower'
-compiling adccalibration.c...
-linking...
-Program Size: Code=41746 RO-data=2150 RW-data=296 ZI-data=4544  
-FromELF: creating hex file...
 "2026superpower\2026superpower.axf" - 0 Error(s), 0 Warning(s).
-Build Time Elapsed:  00:00:01
+Build Time Elapsed:  00:00:00

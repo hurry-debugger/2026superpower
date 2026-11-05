@@ -23,16 +23,19 @@
 ## 当前实现
 
 启动阶段先关闭四路功率输出，唯一匹配 UID 并拟合五路校准记录，然后完成两个 ADC 硬件
-自校准。PowerCtrlTask_Init 核对实际 HRTIM 时基、中断请求、预装载与优先级，准备采样和通信，
-一次启动 Master/A/B。配置不符合约定时保持停机，可观察 g_power_ctrl_task.configuration_ready。
+自校准。PowerCtrlTask_Init 准备控制、采样和通信后，一次启动 Master/A/B。
+时基、中断请求、预装载及优先级由 CubeMX 配置和静态审查保证，启动时不重复核对。
 
-Master 每 40 μs 串行执行裁判解析、十次整数平均、校准换算、整组反馈发布和 PowerCtrl_Task。
+Master 每 40 μs 串行执行十次整数平均、校准换算、整组反馈发布和 PowerCtrl_Task。
 ADC1/ADC2 循环 DMA 为 80/20 元素，每半块为十次扫描；中断复制到稳定槽并检查覆盖、错序，
 Master 按相同序号配对，不直接平均活动 DMA 缓冲。采集故障锁存至共同重新初始化。
-Timer A 保留 PWM/ADC 触发；Timer B 每 1 ms 发送两帧经典 CAN。主循环仅处理 UART 恢复。
+Timer A 保留 PWM/ADC 触发；Timer B 每 1 ms 发送两帧经典 CAN。主循环为空闲循环。
 
 User/Procotol 统一容纳 USART BSP、Taurus 适配 CAN BSP、裁判 CRC/解析和超电协议。
-USART1 普通 DMA 的 IDLE/满缓冲移交 Master 解析；不跨批次拼帧，仍有重启接收间隙。
+USART1 的 IDLE/满缓冲回调先由 DMA 剩余计数取得实际长度，停止 DMA 后直接解析并重启接收；
+两个控制报文及对应有效时间在短临界区内整组发布，CRC 和扫描允许 Master 抢占。
+错误批次丢弃后重启；运行期重启失败时终止残留接收并重试一次，仍失败则停止接收、等待重新初始化。
+启动失败进入 Error_Handler；运行期失败不冻结控制和超时保护，不跨批次拼帧，仍有接收间隙。
 CAN 0x100 发送电容电压与底盘电流，0x101 发送旧语义故障和状态；0x010 的首字节为1时
 请求保护。主中断执行超期锁存关断；所有输出由 PowerCtrl 唯一管理。
 

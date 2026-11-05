@@ -30,7 +30,6 @@
 #include "UID.h"
 #include "adccalibration.h"
 #include "power_ctrl_task.h"
-#include "bsp_usart.h"
 
 /* USER CODE END Includes */
 
@@ -120,7 +119,7 @@ int main(void)
         Error_Handler();
     }
 
-    /** @brief 核对生成配置，准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */
+    /** @brief 准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */
     PowerCtrlTask_Init();
   /* USER CODE END 2 */
 
@@ -131,7 +130,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-        USER_UART_Recover();
   }
   /* USER CODE END 3 */
 }

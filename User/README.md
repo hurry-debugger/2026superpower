@@ -1,7 +1,7 @@
 # 自维护固件目录
 
 当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
-采样发布、裁判串口接收/解析与控制任务已接入调度；配置与参数门槛仍禁止未就绪输出。
+采样发布、裁判串口接收/解析与控制任务已接入调度；参数及校准门槛仍禁止未就绪输出。
 启动保留UID匹配及拟合，Master接入十次平均和换算，不启用可选低通；上板验证待完成。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
@@ -11,7 +11,7 @@
 ```text
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
-├── Bsp/          # UID、HRTIM、采样发布及裁判 USART 接收
+├── Bsp/          # UID、HRTIM 与采样发布
 ├── Calibration/  # 校准记录、拟合算法及理论换算
 ├── Procotol/     # USART/CAN BSP、超电协议、裁判类型、CRC 与解析（沿用拼写）
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
@@ -254,7 +254,7 @@ PARAMETERS_READY=0和全部PID系数仍为待填模板，不代表已具备闭�
 两个取值均为协议 uint16_t，天然有限且非负，不再使用旧浮点中转对象。
 协议更新和 Task 都由 Master 串行执行；UART IRQ 只停止接收并移交长度，不解析协议。
 Master 顺序为 USER_UART_Process → BspAdcFeedback_Process → PowerCtrl_Task。
-USART/RX DMA IRQ 尚 active、前台恢复或等待恢复时跳过 UART Process，避免 HAL 句柄重入。
+USART/RX DMA IRQ 尚 active 时跳过 UART Process，避免 Master 抢占后重入 HAL 句柄。
 每次 Task 按反馈发布序号检查微秒级停更，超过两倍40 μs发布周期时检出；
 毫秒时间另用于长时间陈旧检查。所有错误检测仍在25 kHz控制中断内。
 Master 发现下一次 MREP 已到达时立即关断并锁存执行超时，直至重新 Init，不补跑遗漏周期。
@@ -271,9 +271,12 @@ CRC、协议类型与 28 种命令分发源自 Taurus-arm/user/Procotol/judge；
 0x0307 因布局不一致被拒绝发布，待依据协议版本单独确认。控制使用的两类报文不受影响。
 
 Procotol/bsp_usart.c/.h 仅接收裁判，绑定已生成的 USART1 / DMA1_Channel3 普通 RX DMA。
-USART IRQ 在原 HAL IRQ 前处理空闲，使用 HAL_UART_AbortReceive_IT，终止完成才发布稳定长度；
-满150字节也会移交。Master 解析后非阻塞重启，运行失败请求主循环 USER_UART_Recover。
-恢复时前台拥有 HAL 句柄，暂时关闭 UART/RX DMA IRQ；所有权释放和 IRQ 恢复在短临界区完成。
+USER_UART_Init(void) 通过 JUDGE_HUART 固定裁判串口，保留 Taurus 的空闲回调、中断、初始化结构。
+USART IRQ 在原 HAL IRQ 前处理空闲，直接 HAL_UART_AbortReceive 后发布稳定长度；
+本地 G4 HAL 的 UART/DMA 终止实现没有轮询等待，不将这个结论套用于其他系列 HAL。
+普通 DMA 满150字节也会移交。仅保留待处理长度和标志，Master 解析一次后重启接收。
+错误回调终止并丢弃本批次，以零长度请求重启；失败时保留请求，下个控制周期重试，
+不重复解析旧数据。主循环不再操作 UART，不使用前台恢复、IRQ 开关或所有权标志。
 接收存在间隙、不跨批次拼帧；处理时刻不是硬件到达时刻，最坏150字节解析耗时仍待测量。
 裁判两个有效时间只由成功解析对应报文更新，串口恢复不刷新它们。
 
@@ -352,6 +355,7 @@ Timer B在保存/恢复PRIMASK的短临界区复制电压、电流、错误和�
 
 Master/B重复计数分别9/249，中断请求分别MREP/REP；A无业务请求。
 NVIC：Master=0，ADC DMA=1，B=2，USART/UART DMA/FDCAN=3，SysTick=15。
-PowerCtrlTask_Init静态运行核对实际周期、请求、预装载和优先级；不符合时保持停机，
-由g_power_ctrl_task.configuration_ready观察。g_supercap_can记录底盘模式及发送忙/失败次数。
+周期、请求、预装载和优先级由CubeMX配置和静态审查保证，PowerCtrlTask_Init不重复核对。
+UART固定为USART1/DMA1_Channel3普通接收，不在初始化中复查绑定和模式，UART模块为必选。
+CAN仅在BSP配置过滤器时保留容量边界检查。g_supercap_can记录底盘模式及发送忙/失败次数。
 采样、数值、远程保护、500 ms恢复、CAN帧和最坏40 μs执行时间均待上板验证。

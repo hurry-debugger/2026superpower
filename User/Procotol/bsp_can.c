@@ -22,7 +22,7 @@ void Fdcanx_Init(FDCAN_HandleTypeDef *hfdcanx, const uint32_t fdcanx_id[],
     uint32_t i = 0U;
     uint32_t filter_index = 0U;
 
-    if(hfdcanx != &hfdcan1 || hfdcanx->Init.StdFiltersNbr == 0U)
+    if(hfdcanx != &hfdcan1)
     {
         Error_Handler();
         return;
