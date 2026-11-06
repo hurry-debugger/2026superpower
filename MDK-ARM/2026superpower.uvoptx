@@ -683,8 +683,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>../User/Bsp/bsp_adc_feedback.c</PathWithFileName>
-      <FilenameWithoutPath>bsp_adc_feedback.c</FilenameWithoutPath>
+      <PathWithFileName>../User/Bsp/bsp_adc.c</PathWithFileName>
+      <FilenameWithoutPath>bsp_adc.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -695,8 +695,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>../User/Bsp/bsp_adc_feedback.h</PathWithFileName>
-      <FilenameWithoutPath>bsp_adc_feedback.h</FilenameWithoutPath>
+      <PathWithFileName>../User/Bsp/bsp_adc.h</PathWithFileName>
+      <FilenameWithoutPath>bsp_adc.h</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>

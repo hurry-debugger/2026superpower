@@ -3,7 +3,8 @@
  * @note 文件归属 User/Calibration；引用者沿用同名头文件及新增包含路径。
  * @brief 超级电容板的理论换算、启动拟合、校准状态及统一物理量换算。
  * @details 参数依据用户提供的 Super-capacitor control.pdf 第 3～5 页，
- *          INA240A2 增益同时核对 TI 手册；图纸与实板一致性及标定仍待验证。
+ *          图纸 U7/U8 标为 INA240A2；用户于 2026-11-06 确认实装 INA240A1。
+ *          A1 的 20 V/V 增益依据 TI 手册，采样精度仍待实板标定。
  *          ADC 满量程映射采用当前 ST LL 换算宏的 4095 分母，不代表消除了量化误差。
  * @note 不访问 ADC/DMA，不进行平均或低通；UID.c 负责匹配与发布全局状态。
  *       换算缓存只在启动初始化中更新，消费者启动后必须保持只读。
@@ -31,8 +32,8 @@ extern "C"
 #define ADC_V_BAT_DIVIDER_RATIO (11.0f)
 /** @brief 电容分压还原倍数，无量纲；R27=10 kΩ、R71=1 kΩ。 */
 #define ADC_V_CAP_DIVIDER_RATIO (11.0f)
-/** @brief U7/U8 INA240A2 的标称电压增益，单位 V/V。 */
-#define ADC_CURRENT_SENSE_GAIN (50.0f)
+/** @brief U7/U8 实装 INA240A1 的增益，单位 V/V；用户 2026-11-06 确认，TI 手册为 20。 */
+#define ADC_CURRENT_SENSE_GAIN (20.0f)
 /** @brief R3/R18 电流采样电阻，单位 Ω。 */
 #define ADC_CURRENT_SHUNT_OHM (0.003f)
 /** @brief 电池电流通道零电流输出，单位 V；U9 参考的一半，独立于 ADC 的 U5 参考。 */
@@ -80,39 +81,42 @@ typedef struct
     float bias; /**< 电压通道为 V，电流通道为 A，允许负值。 */
 } AdcCalibrationCoeff_t;
 
-/** @brief 板卡识别问题位，可按位组合。 */
-typedef enum
+/**
+ * @brief 板卡识别错误标志；各成员 1 表示错误有效，0 表示无该错误。
+ * @note 启动匹配后只读；仅通过成员访问，不依赖位域布局。
+ */
+typedef struct
 {
-    ADC_CAL_BOARD_ERR_NONE = 0U,
-    ADC_CAL_BOARD_ERR_NO_RECORD = 1U << 0,     /**< 当前 UID 无记录。 */
-    ADC_CAL_BOARD_ERR_DUPLICATE_UID = 1U << 1, /**< 当前 UID 对应多个记录。 */
-    ADC_CAL_BOARD_ERR_INVALID_ID = 1U << 2     /**< 初始化参数超出记录下标范围。 */
-} AdcCalibrationBoardError_e;
+    uint32_t no_record : 1; /**< 未登记板卡：当前 MCU UID 没有匹配记录。 */
+    uint32_t duplicate_uid : 1; /**< 重复登记：当前 MCU UID 对应多个记录，拒绝任选一条。 */
+    uint32_t invalid_id : 1; /**< 记录下标非法：初始化参数超出记录下标范围。 */
+    uint32_t reserved : 29; /**< 保留，保持为 0。 */
+} AdcCalibrationBoardError_t;
 
 /**
- * @brief 每路采集数据及拟合问题位。
- * @note 输入按计数范围或物理量范围归类，首个坏点即返回。
- *       MISSING_POINT、NONFINITE 仅保留原数值，当前范围检查不单独发布这两个问题位。
+ * @brief 每路校准输入和拟合错误；各成员 1 表示错误有效，0 表示无该错误。
+ * @note 首个错误即停止本通道拟合，仅通过成员访问，不依赖位域布局。
+ *       missing_point、nonfinite 保留名称但始终为 0；缺失和非有限值归入对应范围错误。
  */
-typedef enum
+typedef struct
 {
-    ADC_CAL_CHANNEL_ERR_NONE = 0U,
-    ADC_CAL_CHANNEL_ERR_MISSING_POINT = 1U << 0,  /**< NAN 表示缺失的采集值。 */
-    ADC_CAL_CHANNEL_ERR_NONFINITE = 1U << 1,      /**< 存在其他非有限采集值。 */
-    ADC_CAL_CHANNEL_ERR_COUNT_RANGE = 1U << 2,    /**< 计数未落在 [0,4095]，含非有限值。 */
-    ADC_CAL_CHANNEL_ERR_ZERO_VARIANCE = 1U << 3,  /**< 所有 ADC 计数相同。 */
-    ADC_CAL_CHANNEL_ERR_GAIN_NONPOSITIVE = 1U << 4, /**< 增益非正，方向不符合当前定义。 */
-    ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE = 1U << 5,  /**< 系数或换算中间值不可由 float 表示。 */
-    ADC_CAL_CHANNEL_ERR_VALUE_RANGE = 1U << 6     /**< 实测值或校准区间拟合极值不满足配置上限。 */
-} AdcCalibrationChannelError_e;
+    uint32_t missing_point : 1; /**< 缺失采集点的保留项；当前由计数/实测值范围错误报告。 */
+    uint32_t nonfinite : 1; /**< 非有限输入的保留项；当前由计数/实测值范围错误报告。 */
+    uint32_t count_range : 1; /**< 原始计数越界：不在 [0,4095]，包括 NaN 或无穷值。 */
+    uint32_t zero_variance : 1; /**< 计数零方差：全部原始计数相同，无法拟合增益。 */
+    uint32_t gain_nonpositive : 1; /**< 增益非正：拟合方向错误或窄化为 float 后下溢为零。 */
+    uint32_t numeric_range : 1; /**< 数值溢出：系数或全量程换算相关值不可由 float 表示。 */
+    uint32_t value_range : 1; /**< 物理量越界：实测值非法或校准区间拟合端点幅值超限。 */
+    uint32_t reserved : 25; /**< 保留，保持为 0。 */
+} AdcCalibrationChannelError_t;
 
 /** @brief UID 匹配和启动拟合状态；全部通道有效且无板卡问题才允许控制。 */
 typedef struct
 {
     UID_t uid; /**< 实际 MCU UID，由 UID_MatchCalibration() 写入。 */
     SupercapId_e supercap_id; /**< 唯一匹配的记录下标，未识别时为 UNKNOWN。 */
-    uint32_t board_errors; /**< AdcCalibrationBoardError_e 的问题位。 */
-    uint32_t channel_errors[ADC_CHANNEL_COUNT]; /**< 各通道独立的问题位。 */
+    AdcCalibrationBoardError_t board_errors; /**< 板卡识别错误，按具名位域查看。 */
+    AdcCalibrationChannelError_t channel_errors[ADC_CHANNEL_COUNT]; /**< 各通道独立拟合错误。 */
     uint32_t valid_channel_mask; /**< 通过拟合校验的通道位；不是 DMA 同步标志。 */
 } AdcCalibrationState_t;
 

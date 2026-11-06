@@ -68,7 +68,8 @@ void UID_MatchCalibration(void)
     if(match_count > 1U)
     {
         /* 保留理论系数，但区分无记录和重复匹配，避免误选其中一条。 */
-        state.board_errors = ADC_CAL_BOARD_ERR_DUPLICATE_UID;
+        state.board_errors.no_record = 0U;
+        state.board_errors.duplicate_uid = 1U;
     }
 
     g_adc_calibration_state = state;

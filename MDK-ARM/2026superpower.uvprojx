@@ -1093,14 +1093,14 @@
               <FilePath>../User/Bsp/bsp_hrtim.h</FilePath>
             </File>
             <File>
-              <FileName>bsp_adc_feedback.c</FileName>
+              <FileName>bsp_adc.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../User/Bsp/bsp_adc_feedback.c</FilePath>
+              <FilePath>../User/Bsp/bsp_adc.c</FilePath>
             </File>
             <File>
-              <FileName>bsp_adc_feedback.h</FileName>
+              <FileName>bsp_adc.h</FileName>
               <FileType>5</FileType>
-              <FilePath>../User/Bsp/bsp_adc_feedback.h</FilePath>
+              <FilePath>../User/Bsp/bsp_adc.h</FilePath>
             </File>
           </Files>
         </Group>

@@ -1,13 +1,13 @@
 /** @file power_ctrl_config.h
- * @brief 控制参数、保护周期计数及毫秒超时；参数未就绪时禁止输出。
+ * @brief 控制参数、保护周期计数及毫秒超时；参数未就绪时禁止闭环输出。
  * @note 编译模式在 main.h 的 USER CODE Private defines 中用注释选择。
  */
 #ifndef SUPERPOWER_POWER_CTRL_CONFIG_H
 #define SUPERPOWER_POWER_CTRL_CONFIG_H
 
-/** @brief PID 参数和时序填写完成后手动置 1；不代表上板验证。 */
+/** @brief 闭环 PID 参数和时序填写完成后手动置 1；开环不依赖此门槛，不代表上板验证。 */
 #define POWER_CTRL_PARAMETERS_READY (0U)
-/** @brief 本轮已静态核对 CubeMX 预装载和调度配置，不代表波形或硬件已验证。 */
+/** @brief 两模式共用就绪门槛；已静态核对 CubeMX 预装载、固定 50% 比较值及调度，波形待验证。 */
 #define POWER_CTRL_PWM_READY (1U)
 /** @brief ADC1 每十次四通道扫描产生 TC，控制周期 40 us，即 25 kHz。 */
 #define POWER_CTRL_PERIOD_US (40U)
@@ -30,17 +30,19 @@
 #define POWER_CTRL_CHASSIS_RECOVER_V (33.0f)
 /** @brief 旧工程参考电池欠压 V。 */
 #define POWER_CTRL_BAT_UNDERVOLTAGE_V (10.0f)
+/** @brief 用户确认的底盘短路低压阈值 V，严格低于；来源为港科判据，待实板验证。 */
+#define POWER_CTRL_SHORT_CIRCUIT_VOLTAGE_V (4.0f)
+/** @brief 用户确认的底盘短路绝对电流阈值 A，严格大于；按实装 INA240A1 量程选取，待实板验证。 */
+#define POWER_CTRL_SHORT_CIRCUIT_CURRENT_A (20.0f)
 /** @brief 连续控制周期数；每次 Task 更新一次，不是毫秒。 */
 #define POWER_CTRL_CAP_OVERVOLTAGE_CYCLES (10U)
 #define POWER_CTRL_CHASSIS_OVERVOLTAGE_CYCLES (1U)
 #define POWER_CTRL_BAT_UNDERVOLTAGE_CYCLES (10U)
-/** @brief 港科 TIM2 名义 1 ms 的 500 次冷却，换算为 500 ms。 */
+/** @brief 首次有效预置后的无错误等待 ms；差值达到即恢复，不额外增加 tick。 */
 #define POWER_CTRL_RESTART_DELAY_MS (500U)
-/** @brief 旧工程参考裁判超时 ms，仅上场检查。 */
+/** @brief 旧工程参考裁判超时 ms，仅闭环检查。 */
 #define POWER_CTRL_REFEREE_TIMEOUT_MS (300U)
 /** @brief 缓冲能量目标 J，旧工程参考初值。 */
 #define POWER_CTRL_ENERGY_TARGET_J (45.0f)
-/** @brief 无裁判初始目标 W，可通过接口设为负值。 */
-#define POWER_CTRL_TEST_POWER_W (80.0f)
 
 #endif /* SUPERPOWER_POWER_CTRL_CONFIG_H */

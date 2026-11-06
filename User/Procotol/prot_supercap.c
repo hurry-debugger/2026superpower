@@ -1,11 +1,13 @@
 /**
  * @file prot_supercap.c
  * @brief 旧 SuperCap2026_7_17 线上格式与 Taurus BSP 的对接。
- * @note 不依赖 App；不导入旧控制参数、FD 报文或未初始化尾字节。
+ * @note 读取采样与 App 控制状态并取得一致快照；不导入旧控制参数或 FD 报文。
  */
 #include "prot_supercap.h"
 
 #include "bsp_can.h"
+#include "bsp_adc.h"
+#include "power_ctrl.h"
 
 #include <float.h>
 #include <string.h>
@@ -24,6 +26,39 @@ void SupercapCan_Init(void)
     static const uint32_t ids[] = {SUPERCAP_CAN_RX_MODE_ID, 0xFFFU};
     memset(&g_supercap_can, 0, sizeof(g_supercap_can));
     Fdcanx_Init(&hfdcan1, ids, SupercapCan_Receive);
+}
+
+void SupercapCan_SendStatus(void)
+{
+    float cap_voltage_v;
+    float chassis_current_a;
+    PowerCtrlError_t errors;
+    PowerCtrlState_e state;
+    uint8_t faults = 0U;
+    uint8_t wire_state = SUPERCAP_CAN_STATE_PROTECT;
+
+    /* 仅复制最小反馈，恢复调用前 PRIMASK；编码与 HAL 发送均在临界区之外。 */
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    __DMB();
+    cap_voltage_v = g_bsp_adc_feedback.adc_convert[V_CAP];
+    chassis_current_a = g_bsp_adc_feedback.adc_convert[I_CHASSIS];
+    errors = g_power_ctrl.errors;
+    state = g_power_ctrl.state;
+    __DMB();
+    __set_PRIMASK(primask);
+
+    if(errors.bits.cap_overvoltage)
+        faults |= SUPERCAP_CAN_FAULT_CAP_OVERVOLTAGE;
+    if(errors.bits.chassis_overvoltage)
+        faults |= SUPERCAP_CAN_FAULT_CHASSIS_OVERVOLTAGE;
+    if(errors.bits.bat_undervoltage)
+        faults |= SUPERCAP_CAN_FAULT_BAT_UNDERVOLTAGE;
+    if(errors.bits.referee)
+        faults |= SUPERCAP_CAN_FAULT_REFEREE;
+    if(state == CTRL_MODE)
+        wire_state = SUPERCAP_CAN_STATE_NORMAL;
+    SupercapCan_SendFeedback(cap_voltage_v, chassis_current_a, faults, wire_state);
 }
 
 void SupercapCan_SendFeedback(float cap_voltage_v, float chassis_current_a,

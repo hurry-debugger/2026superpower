@@ -25,8 +25,8 @@
 typedef struct
 {
     volatile uint8_t chassis_mode; /**< RX IRQ 发布的原子字节；1 请求保护，其他值解除。 */
-    uint32_t tx_busy_count; /**< Timer B 发送时 FIFO 满而丢弃的帧数，自然回绕。 */
-    uint32_t tx_error_count; /**< Timer B 发送 HAL 失败的帧数，自然回绕。 */
+    uint32_t tx_busy_count; /**< Master 发送时 FIFO 满而丢弃的帧数，自然回绕。 */
+    uint32_t tx_error_count; /**< Master 发送 HAL 失败的帧数，自然回绕。 */
 } SupercapCan_t;
 
 extern SupercapCan_t g_supercap_can;
@@ -34,12 +34,19 @@ extern SupercapCan_t g_supercap_can;
 /** @brief 启动前清零协议状态，使用 Taurus BSP 绑定并启动 FDCAN1。 */
 void SupercapCan_Init(void);
 /**
+ * @brief 取得反馈与控制状态的一致快照，映射旧协议后发送测量和状态帧。
+ * @pre 控制、采样和 CAN 已初始化；仅由 HRTIM Master 1 kHz 重复中断调用。
+ * @note 短临界区只读取电容电压 V、底盘电流 A、错误位和控制状态，
+ *       恢复调用前 PRIMASK 后再编码和发送；不写控制状态，不等待、不重试。
+ */
+void SupercapCan_SendStatus(void);
+/**
  * @brief 每毫秒分别尝试发送测量和状态帧，不等待、不重试。
  * @param[in] cap_voltage_v 电容电压 V，按 IEEE 754 binary32 小端传输。
  * @param[in] chassis_current_a 底盘电流 A；旧源码实际传入的不是电容电流。
  * @param[in] faults 已映射为旧定义的故障字节。
  * @param[in] state 已映射为旧定义的 0/1/2 状态字节。
- * @pre Timer B 唯一调用；四个输入已由应用层取得一致快照。
+ * @pre 仅由 Master 上下文的 SupercapCan_SendStatus 调用；四个输入来自一致快照。
  * @note 状态帧剩余六字节固定为零；HAL_OK 只表示入队成功。
  */
 void SupercapCan_SendFeedback(float cap_voltage_v, float chassis_current_a,

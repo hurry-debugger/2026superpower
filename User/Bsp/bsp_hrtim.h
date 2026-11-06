@@ -71,12 +71,14 @@ void BspHrtim_SetGeneralizedDuty(float generalized_duty);
 
 /**
  * @brief 统一开启 TA1、TA2、TB1、TB2 四路功率输出。
- * @pre 初始化及 SetGeneralizedDuty() 的配置前提均已满足，计数器正常运行且更新已使能。
- *      最近一次设置后已运行至少一个完整 PWM 周期，确保两侧比较值均已装载。
- * @pre 调用方已确认完整 ADC 校准有效、反馈及启动条件成立，且允许功率输出。
+ * @pre 已初始化；SetGeneralizedDuty() 所述固定外设配置成立，计数器正常运行且更新已使能。
+ *      最近一次比较值设置后已运行至少一个完整 PWM 周期，确保两侧比较值均已装载。
+ * @pre 闭环调用方已确认完整 ADC 校准、反馈及启动条件成立，并已设置有效平衡占空比。
+ *      开环调用方使用 CubeMX 配置的固定 50% 窗口，并确认外部已断开 MOS 驱动供电或信号；
+ *      开环的固定比较值不能作为闭环功率启动值。两模式均确认 PWM 就绪且无远程保护请求。
  *      与本模块其他调用及 HRTIM HAL 句柄写入互斥。
  * @note 不读取校准状态、不启动计数器、不设置默认占空比；HAL 失败进入 Error_Handler()。
- *       默认值和相同的两侧占空比不能代替调用方根据实际电压确定启动值。
+ *       此接口会开启四路引脚输出，软件无法同时保证所连 MOS 不动作。
  */
 void BspHrtim_EnableOutput(void);
 

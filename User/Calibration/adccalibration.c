@@ -41,12 +41,12 @@ static const float s_value_limits[ADC_CHANNEL_COUNT] =
  * @param[in] record 稳定的只读记录。
  * @param[in] channel 有效五路通道之一。
  * @param[out] coefficient 仅成功时写入 gain 与 bias，单位为对应 V/A。
- * @return AdcCalibrationChannelError_e 问题位，零表示成功。
+ * @return 本通道错误结构体，所有错误成员为 0 表示成功。
  * @pre 指针非空；仅在启动初始化调用，不在高速反馈中拟合。
  */
-static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
-                                         AdcChannel_e channel,
-                                         AdcCalibrationCoeff_t *coefficient);
+static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
+    const AdcCalibrationRecord_t *record, AdcChannel_e channel,
+    AdcCalibrationCoeff_t *coefficient);
 
 /* ==================== 公共接口实现 ==================== */
 
@@ -76,27 +76,32 @@ AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id)
 
     if(supercap_id == SUPERCAP_ID_UNKNOWN)
     {
-        state.board_errors = ADC_CAL_BOARD_ERR_NO_RECORD;
-        return state;
+        state.board_errors.no_record = 1U;
     }
-
-    if((int)supercap_id < 0 || supercap_id >= SUPERCAP_COUNT)
+    else if((int)supercap_id < 0 || supercap_id >= SUPERCAP_COUNT)
     {
-        state.board_errors = ADC_CAL_BOARD_ERR_INVALID_ID;
-        return state;
+        state.board_errors.invalid_id = 1U;
     }
-
-    state.supercap_id = supercap_id;
-
-    for(uint32_t channel = 0U; channel < ADC_CHANNEL_COUNT; channel++)
+    else
     {
-        state.channel_errors[channel] = AdcCalibration_FitChannel(
-            &g_adc_calibration_records[supercap_id], (AdcChannel_e)channel,
-            &s_coefficients[channel]);
+        state.supercap_id = supercap_id;
 
-        if(state.channel_errors[channel] == ADC_CAL_CHANNEL_ERR_NONE)
+        for(uint32_t channel = 0U; channel < ADC_CHANNEL_COUNT; channel++)
         {
-            state.valid_channel_mask |= 1U << channel;
+            state.channel_errors[channel] = AdcCalibration_FitChannel(
+                &g_adc_calibration_records[supercap_id], (AdcChannel_e)channel,
+                &s_coefficients[channel]);
+
+            if(!state.channel_errors[channel].missing_point
+               && !state.channel_errors[channel].nonfinite
+               && !state.channel_errors[channel].count_range
+               && !state.channel_errors[channel].zero_variance
+               && !state.channel_errors[channel].gain_nonpositive
+               && !state.channel_errors[channel].numeric_range
+               && !state.channel_errors[channel].value_range)
+            {
+                state.valid_channel_mask |= 1U << channel;
+            }
         }
     }
 
@@ -122,10 +127,12 @@ float *AdcCalibration_Convert(const uint16_t adc_raw[ADC_CHANNEL_COUNT],
 
 /* ==================== 私有接口实现 ==================== */
 
-static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
-                                         AdcChannel_e channel,
-                                         AdcCalibrationCoeff_t *coefficient)
+static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
+    const AdcCalibrationRecord_t *record, AdcChannel_e channel,
+    AdcCalibrationCoeff_t *coefficient)
 {
+    /* 返回本次拟合错误；失败前不能复用或覆盖调用方已有的换算系数。 */
+    AdcCalibrationChannelError_t errors = {0};
     const float *raw = record->calibration_data[ADC_CAL_RAW_ROW(channel)];
     const float *real = record->calibration_data[ADC_CAL_REAL_ROW(channel)];
     const float min_value = (channel == I_BAT || channel == I_CHASSIS)
@@ -140,13 +147,15 @@ static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
         /* 必须落在闭区间内；NaN 和无穷也会被范围比较拒绝。 */
         if(!(raw[point] >= 0.0f && raw[point] <= (float)ADC_FULL_SCALE_COUNT))
         {
-            return ADC_CAL_CHANNEL_ERR_COUNT_RANGE;
+            errors.count_range = 1U;
+        }
+        else if(!(real[point] >= min_value && real[point] <= s_value_limits[channel]))
+        {
+            errors.value_range = 1U;
         }
 
-        if(!(real[point] >= min_value && real[point] <= s_value_limits[channel]))
-        {
-            return ADC_CAL_CHANNEL_ERR_VALUE_RANGE;
-        }
+        if(errors.count_range || errors.value_range)
+            break;
 
         if(raw[point] < raw_min)
         {
@@ -162,55 +171,63 @@ static uint32_t AdcCalibration_FitChannel(const AdcCalibrationRecord_t *record,
         real_sum += (double)real[point];
     }
 
-    double raw_mean = raw_sum / (double)ADC_CAL_POINT_COUNT;
-    double real_mean = real_sum / (double)ADC_CAL_POINT_COUNT;
-    double raw_variance = 0.0;
-    double covariance = 0.0;
-
-    for(uint32_t point = 0U; point < ADC_CAL_POINT_COUNT; point++)
+    if(!errors.count_range && !errors.value_range)
     {
-        double raw_delta = (double)raw[point] - raw_mean;
-        double real_delta = (double)real[point] - real_mean;
+        double raw_mean = raw_sum / (double)ADC_CAL_POINT_COUNT;
+        double real_mean = real_sum / (double)ADC_CAL_POINT_COUNT;
+        double raw_variance = 0.0;
+        double covariance = 0.0;
 
-        raw_variance += raw_delta * raw_delta;
-        covariance += raw_delta * real_delta;
+        for(uint32_t point = 0U; point < ADC_CAL_POINT_COUNT; point++)
+        {
+            double raw_delta = (double)raw[point] - raw_mean;
+            double real_delta = (double)real[point] - real_mean;
+
+            raw_variance += raw_delta * raw_delta;
+            covariance += raw_delta * real_delta;
+        }
+
+        if(raw_variance == 0.0)
+        {
+            errors.zero_variance = 1U;
+        }
+        else
+        {
+            double gain = covariance / raw_variance;
+            double bias = real_mean - gain * raw_mean;
+
+            /*
+             * 运行保护峰值只约束实际校准区间内的拟合极值，不约束量程外推值。
+             * 全 ADC 量程仅检查 float 可表示性，避免窄区间产生的异常斜率溢出。
+             * 结果集中在此校验，通过后才窄化并更新缓存系数。
+             */
+            double fitted_min = (double)raw_min * gain + bias;
+            double fitted_max = (double)raw_max * gain + bias;
+            double full_scale_product = (double)ADC_FULL_SCALE_COUNT * gain;
+            double full_scale_value = full_scale_product + bias;
+
+            if(!(fabs(full_scale_product) <= (double)FLT_MAX
+                 && fabs(bias) <= (double)FLT_MAX && fabs(full_scale_value) <= (double)FLT_MAX))
+            {
+                errors.numeric_range = 1U;
+            }
+            else if((float)gain <= 0.0f)
+            {
+                /* 同时拒绝窄化后下溢为零的增益。 */
+                errors.gain_nonpositive = 1U;
+            }
+            else if(!(fabs(fitted_min) <= (double)s_value_limits[channel]
+                      && fabs(fitted_max) <= (double)s_value_limits[channel]))
+            {
+                errors.value_range = 1U;
+            }
+            else
+            {
+                coefficient->gain = (float)gain;
+                coefficient->bias = (float)bias;
+            }
+        }
     }
 
-    if(raw_variance == 0.0)
-    {
-        return ADC_CAL_CHANNEL_ERR_ZERO_VARIANCE;
-    }
-
-    double gain = covariance / raw_variance;
-    double bias = real_mean - gain * raw_mean;
-
-    /*
-     * 运行保护峰值只约束实际校准区间内的拟合极值，不约束量程外推值。
-     * 全 ADC 量程仅检查 float 可表示性，避免窄区间产生的异常斜率溢出。
-     * 结果集中在此校验，通过后才窄化并更新缓存系数。
-     */
-    double fitted_min = (double)raw_min * gain + bias;
-    double fitted_max = (double)raw_max * gain + bias;
-    double full_scale_product = (double)ADC_FULL_SCALE_COUNT * gain;
-    double full_scale_value = full_scale_product + bias;
-
-    if(!(fabs(full_scale_product) <= (double)FLT_MAX
-         && fabs(bias) <= (double)FLT_MAX && fabs(full_scale_value) <= (double)FLT_MAX))
-    {
-        return ADC_CAL_CHANNEL_ERR_NUMERIC_RANGE;
-    }
-    else if((float)gain <= 0.0f)
-    {
-        /* 同时拒绝窄化后下溢为零的增益。 */
-        return ADC_CAL_CHANNEL_ERR_GAIN_NONPOSITIVE;
-    }
-    else if(!(fabs(fitted_min) <= (double)s_value_limits[channel]
-              && fabs(fitted_max) <= (double)s_value_limits[channel]))
-    {
-        return ADC_CAL_CHANNEL_ERR_VALUE_RANGE;
-    }
-
-    coefficient->gain = (float)gain;
-    coefficient->bias = (float)bias;
-    return ADC_CAL_CHANNEL_ERR_NONE;
+    return errors;
 }
