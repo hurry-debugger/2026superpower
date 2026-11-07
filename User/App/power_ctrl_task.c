@@ -47,12 +47,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
         BspAdcFeedback_Process();
         PowerCtrl_Task();
 #else
-        /* 固定比较值已运行多个 PWM 周期；复用 state 保证只开启一次。 */
-        if(g_power_ctrl.state != CTRL_MODE)
-        {
-            BspHrtim_EnableOutput();
-            g_power_ctrl.state = CTRL_MODE;
-        }
+        BspHrtim_EnableOutput();
 #endif
     }
 }
@@ -67,9 +62,7 @@ void HAL_HRTIM_RepetitionEventCallback(HRTIM_HandleTypeDef *hhrtim, uint32_t tim
 {
     if(hhrtim == &hhrtim1 && timer_index == HRTIM_TIMERINDEX_MASTER)
     {
-#if defined(POWER_CTRL_CLOSED_LOOP)
         PowerCtrl_UpdateErrors();
-#endif
         SupercapCan_SendStatus();
     }
 }

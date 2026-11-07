@@ -1,7 +1,7 @@
 /**
  * @file pid.c
  * @brief Taurus-arm 指定 PID 库的本工程副本，保留原计算及公开类型。
- * @details 来源 Hongxi Wong V1.0.6；仅整理编码、排版、注释与私有声明位置。
+ * @details 来源 Hongxi Wong V1.0.6；保留计算算法，复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       原位置式死区分支输出 0（死区为 0 时误差恰为 0 亦如此），增量式
  *       Ki 为 0 时输出清零。本轮保留这些行为；应用层禁用电机堵转检测。
@@ -62,14 +62,32 @@ static void f_PID_param_init(
     pid->Output = 0;
 }
 
-static void f_PID_reset(PID_TypeDef *pid, float Kp, float Ki, float Kd)
+/**
+ * @brief 清零运行状态及历史，保留系数、限幅、滤波配置和函数指针。
+ * @param[in,out] pid 需要复位的 PID 实例。
+ * @pre 实例已初始化；调用时不得与同一实例的计算并发。
+ */
+static void f_PID_reset(PID_TypeDef *pid)
 {
-    pid->Kp = Kp;
-    pid->Ki = Ki;
-    pid->Kd = Kd;
-
-    if(pid->Ki == 0)
-        pid->Iout = 0;
+    pid->Target = 0.0f;
+    pid->LastNoneZeroTarget = 0.0f;
+    pid->Measure = 0.0f;
+    pid->Last_Measure = 0.0f;
+    pid->Err = 0.0f;
+    pid->Last_Err = 0.0f;
+    pid->L_Last_Err = 0.0f;
+    pid->Pout = 0.0f;
+    pid->Iout = 0.0f;
+    pid->Dout = 0.0f;
+    pid->ITerm = 0.0f;
+    pid->Output = 0.0f;
+    pid->Last_Output = 0.0f;
+    pid->Last_Dout = 0.0f;
+    pid->thistime = 0U;
+    pid->lasttime = 0U;
+    pid->dtime = 0U;
+    pid->ERRORHandler.ERRORCount = 0U;
+    pid->ERRORHandler.ERRORType = PID_ERROR_NONE;
 }
 
 float PID_Calculate(PID_TypeDef *pid, float measure, float target)

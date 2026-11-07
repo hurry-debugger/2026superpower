@@ -14,7 +14,7 @@
 /** @brief 用户确认的电容平均电流限值 A，理想功率换算模型。 */
 #define POWER_CTRL_CAP_CURRENT_MAX_A (15.0f)
 /** @brief 全局放电功率下限 W，另受实时电容功率限制。 */
-#define POWER_CTRL_POWER_MIN_W (-450.0f)
+#define POWER_CTRL_POWER_MAX_W (450.0f)
 /** @brief 用户确认的电容充电目标 V，独立于硬过压阈值。 */
 #define POWER_CTRL_CAP_TARGET_V (29.0f)
 /** @brief 港科 90% 入口比例对应 26.1 V，电压环开始竞争。 */
@@ -26,7 +26,7 @@
 #define POWER_CTRL_INPUT_MIN_V (15.0f)
 /** @brief 用户指定的底盘过流关断阈值 A：450 W / 15 V，不附加低压条件。 */
 #define POWER_CTRL_CHASSIS_CURRENT_MAX_A \
-    (-POWER_CTRL_POWER_MIN_W / POWER_CTRL_INPUT_MIN_V)
+    (POWER_CTRL_POWER_MAX_W / POWER_CTRL_INPUT_MIN_V)
 
 /** @brief 港科 RM2024 底盘过压分档 V，实现按高到低判断，均为严格大于。 */
 #define POWER_CTRL_OVERVOLTAGE_LEVEL_1_V (27.0f)

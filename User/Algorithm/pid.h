@@ -1,7 +1,7 @@
 /**
  * @file pid.h
  * @brief Taurus-arm 指定 PID 库的本工程副本，保留原计算及公开类型。
- * @details 来源 Hongxi Wong V1.0.6；仅整理编码、排版、注释与私有声明位置。
+ * @details 来源 Hongxi Wong V1.0.6；保留计算算法，复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       原位置式死区分支输出 0（死区为 0 时误差恰为 0 亦如此），增量式
  *       Ki 为 0 时输出清零。本轮保留这些行为；应用层禁用电机堵转检测。
@@ -101,11 +101,12 @@ typedef struct _PID_TypeDef
         float derivative_filtering_coefficient,
         uint8_t improve);
 
-    void (*PID_reset)(
-        struct _PID_TypeDef *pid,
-        float Kp,
-        float ki,
-        float kd);
+    /**
+     * @brief 清零运行状态及历史，保留全部参数和函数指针。
+     * @param[in,out] pid 已初始化的 PID 实例。
+     * @pre 不得与同一实例的计算并发。
+     */
+    void (*PID_reset)(struct _PID_TypeDef *pid);
 } PID_TypeDef;
 
 /** @brief 原库增量式计算；measure/target 同单位，返回累计输出。 */

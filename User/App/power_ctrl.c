@@ -23,7 +23,6 @@ static void PowerCtrl_ModeSwitch(void);
 static void PowerCtrl_DutyCalcu(void);
 static void PowerCtrl_CascadePidCalcu(void);
 static void PowerCtrl_ResetLoops(void);
-static void PowerCtrl_ResetPid(PID_TypeDef *pid);
 static float PowerCtrl_Clamp(float value, float lower, float upper);
 static float PowerCtrl_ConstrainPid(PID_TypeDef *pid, const PID_TypeDef *before,
                                   float measure, float target, float lower, float upper);
@@ -43,7 +42,7 @@ void PowerCtrl_Init(void)
      *          积分/差分，不自动乘除 dt。所有环每个控制周期计算一次。
      */
     /* 参照 Taurus Arm_PID_Init 的逐环调用格式；先清零再执行原库初始化。 */
-    PID_Init(&g_power_ctrl.energy_pid, -POWER_CTRL_POWER_MIN_W, -POWER_CTRL_POWER_MIN_W, 0.0f,
+    PID_Init(&g_power_ctrl.energy_pid, POWER_CTRL_POWER_MAX_W, POWER_CTRL_POWER_MAX_W, 0.0f,
              0.0f, 0.0f, 0.0f,
              0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit);
     PID_Init(&g_power_ctrl.power_pid, POWER_CTRL_CAP_CURRENT_MAX_A,
@@ -62,13 +61,6 @@ void PowerCtrl_Init(void)
 
 void PowerCtrl_Task(void)
 {
-    /* 用户指定仅以底盘电流判短路/过流，本周期保护分支直接关断。 */
-    if(fabsf(g_bsp_adc_feedback.adc_convert[I_CHASSIS]) > POWER_CTRL_CHASSIS_CURRENT_MAX_A)
-    {
-        g_power_ctrl.errors.bits.short_circuit = 1U;
-        g_power_ctrl.state = PROTECT_MODE;
-    }
-
     PowerCtrl_ModeSwitch();
     PowerCtrl_DutyCalcu();
 }
@@ -139,11 +131,6 @@ void PowerCtrl_UpdateErrors(void)
     __DMB();
     errors.bits.short_circuit = g_power_ctrl.errors.bits.short_circuit;
     g_power_ctrl.errors = errors;
-    if(errors.all != 0U)
-    {
-        g_power_ctrl.state = PROTECT_MODE;
-        g_power_ctrl.errclearcnt = 0U;
-    }
     __DMB();
     __set_PRIMASK(primask);
 }
@@ -157,6 +144,13 @@ void PowerCtrl_UpdateErrors(void)
  */
 static void PowerCtrl_ModeSwitch(void)
 {
+    /* 用户指定仅以底盘电流判短路/过流，本周期保护分支直接关断。 */
+    if(fabsf(g_bsp_adc_feedback.adc_convert[I_CHASSIS]) > POWER_CTRL_CHASSIS_CURRENT_MAX_A)
+    {
+        g_power_ctrl.errors.bits.short_circuit = 1U;
+        g_power_ctrl.state = PROTECT_MODE;
+    }
+
     if(g_power_ctrl.errors.all != 0U)
     {
         g_power_ctrl.errclearcnt = 0U;
@@ -185,7 +179,9 @@ static void PowerCtrl_ModeSwitch(void)
 static void PowerCtrl_DutyCalcu(void)
 {
     if(g_bsp_adc_feedback.adc_convert[V_CHASSIS] >= POWER_CTRL_INPUT_MIN_V
-       && g_bsp_adc_feedback.adc_convert[V_CHASSIS] <= POWER_CTRL_OVERVOLTAGE_V)
+       && g_bsp_adc_feedback.adc_convert[V_CHASSIS] <= POWER_CTRL_OVERVOLTAGE_V
+       && g_bsp_adc_feedback.adc_convert[V_CAP] > 0.0f
+       && g_bsp_adc_feedback.adc_convert[V_CAP] <= POWER_CTRL_OVERVOLTAGE_V)
     {
         g_power_ctrl.generalized_duty = g_bsp_adc_feedback.adc_convert[V_CAP]
             / g_bsp_adc_feedback.adc_convert[V_CHASSIS];
@@ -193,7 +189,7 @@ static void PowerCtrl_DutyCalcu(void)
     else
     {
         /* 输入电压不可用时记录零前馈；底层统一限幅，输出保护由错误位决定。 */
-        g_power_ctrl.generalized_duty = 0.0f;
+        g_power_ctrl.state = PROTECT_MODE;
     }
 
     // clang-format off
@@ -238,9 +234,6 @@ static void PowerCtrl_CascadePidCalcu(void)
     PID_TypeDef energy_before = g_power_ctrl.energy_pid;
     /* 重算可能改变功率环输出；外环仍需知道重算前是否受电压环限制。 */
     bool voltage_competing = false;
-    /* 能量修正必须能超过裁判功率上限，才能请求负功率放电。 */
-    g_power_ctrl.energy_pid.MaxOut = robot_status.chassis_power_limit - POWER_CTRL_POWER_MIN_W;
-    g_power_ctrl.energy_pid.IntegralLimit = g_power_ctrl.energy_pid.MaxOut;
     PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
                   POWER_CTRL_ENERGY_TARGET_J);
     g_power_ctrl.energy_pid.Output = PowerCtrl_ConstrainPid(
@@ -248,11 +241,11 @@ static void PowerCtrl_CascadePidCalcu(void)
         power_heat_data.buffer_energy, POWER_CTRL_ENERGY_TARGET_J,
         robot_status.chassis_power_limit - fminf(robot_status.chassis_power_limit,
             POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]),
-        robot_status.chassis_power_limit - fmaxf(POWER_CTRL_POWER_MIN_W,
+        robot_status.chassis_power_limit - fmaxf(POWER_CTRL_POWER_MAX_W,
             -POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]));
     g_power_ctrl.power_target_w = PowerCtrl_Clamp(
         robot_status.chassis_power_limit - g_power_ctrl.energy_pid.Output,
-        fmaxf(POWER_CTRL_POWER_MIN_W,
+        fmaxf(POWER_CTRL_POWER_MAX_W,
               -POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]),
         fminf(robot_status.chassis_power_limit,
               POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]));
@@ -281,7 +274,7 @@ static void PowerCtrl_CascadePidCalcu(void)
     }
     else
     {
-        PowerCtrl_ResetPid(&g_power_ctrl.voltage_pid);
+        g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
         g_power_ctrl.voltage_pid.Output = g_power_ctrl.current_limit_a;
     }
     /* 暂存限幅结果，避免覆盖外环抗饱和判断仍需读取的功率环原始输出。 */
@@ -332,22 +325,13 @@ static void PowerCtrl_CascadePidCalcu(void)
 
 static void PowerCtrl_ResetLoops(void)
 {
-    PowerCtrl_ResetPid(&g_power_ctrl.energy_pid);
-    PowerCtrl_ResetPid(&g_power_ctrl.power_pid);
-    PowerCtrl_ResetPid(&g_power_ctrl.voltage_pid);
-    PowerCtrl_ResetPid(&g_power_ctrl.current_pid);
+    g_power_ctrl.energy_pid.PID_reset(&g_power_ctrl.energy_pid);
+    g_power_ctrl.power_pid.PID_reset(&g_power_ctrl.power_pid);
+    g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
+    g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
     g_power_ctrl.power_target_w = 0.0f;
     g_power_ctrl.current_limit_a = 0.0f;
     /* generalized_duty 是本周期已检查的前馈，进入 CTRL 时仍需叠加 PID 修正。 */
-}
-
-static void PowerCtrl_ResetPid(PID_TypeDef *pid)
-{
-    PID_TypeDef config = *pid;
-    memset(pid, 0, sizeof(*pid));
-    PID_Init(pid, config.MaxOut, config.IntegralLimit, config.DeadBand,
-        config.Kp, config.Ki, config.Kd, config.ScalarA, config.ScalarB,
-        config.Output_Filtering_Coefficient, config.Derivative_Filtering_Coefficient, config.Improve);
 }
 
 static float PowerCtrl_Clamp(float value, float lower, float upper)
