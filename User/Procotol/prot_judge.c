@@ -5,8 +5,8 @@
 #include "string.h"
 
 /** @brief 两类控制报文的独立接收历史，上电时均为未收到。 */
-JudgeRxState_t g_judge_robot_status_rx;
-JudgeRxState_t g_judge_power_heat_rx;
+uint32_t g_judge_rx_update_ms = 0;
+
 
 /* ==================== 比赛状态类数据 ==================== */
 game_status_t                       game_status;                    //0x0001 比赛状态数据，固定以1Hz频率发送
@@ -65,8 +65,6 @@ uint8_t judge_get_data(uint8_t *data, uint16_t data_len)
     uint8_t result = 1U;
     uint16_t total_data_length;
     uint16_t cmd_id;
-    /** @brief 两类发布分支复用的中断掩码快照，恢复调用前状态，不直接无条件开中断。 */
-    uint32_t saved_primask;
 
     while((data != NULL) && ((uint16_t)(data_len - index) >= 9U))
     {
@@ -75,6 +73,15 @@ uint8_t judge_get_data(uint8_t *data, uint16_t data_len)
             index++;
             continue;
         }
+        cmd_id = (uint16_t)data[index + 5U] | ((uint16_t)data[index + 6U] << 8U);
+        // 仅解析机器人性能类报文，其他报文不解析
+        if (cmd_id != ID_power_heat_data && cmd_id != ID_robot_status)
+        {
+            index++;
+            continue;
+        }
+
+        g_judge_rx_update_ms = HAL_GetTick();
 
         memcpy(&frame_header, &data[index], sizeof(frame_header));
         if(!crc8_verify_checksum(&data[index], sizeof(frame_header)))
@@ -96,7 +103,6 @@ uint8_t judge_get_data(uint8_t *data, uint16_t data_len)
         }
 
         result = 0U;
-        cmd_id = (uint16_t)data[index + 5U] | ((uint16_t)data[index + 6U] << 8U);
         // clang-format off
         switch(cmd_id)
         {
@@ -107,38 +113,8 @@ uint8_t judge_get_data(uint8_t *data, uint16_t data_len)
             case ID_ext_supply_projectile_action: judge_copy_if_length(&ext_supply_projectile_action, &data[index + 7U], frame_header.data_length, LEN_ext_supply_projectile_action); break;
             case ID_referee_warning:              judge_copy_if_length(&referee_warning, &data[index + 7U], frame_header.data_length, LEN_referee_warning); break;
             case ID_dart_info:                    judge_copy_if_length(&dart_info, &data[index + 7U], frame_header.data_length, LEN_dart_info); break;
-            case ID_robot_status:
-            {
-                if(frame_header.data_length == LEN_robot_status
-                   && sizeof(robot_status) == LEN_robot_status)
-                {
-                    /* 只覆盖本类载荷及其接收历史，避免高优先级控制读取到半份报文。 */
-                    saved_primask = __get_PRIMASK();
-                    __disable_irq();
-                    __DMB();
-                    memcpy(&robot_status, &data[index + 7U], sizeof(robot_status));
-                    g_judge_robot_status_rx.update_ms = HAL_GetTick();
-                    g_judge_robot_status_rx.valid = true;
-                    __DMB();
-                    __set_PRIMASK(saved_primask);
-                }
-            }    break;
-            case ID_power_heat_data:
-            {
-                if(frame_header.data_length == LEN_power_heat_data
-                   && sizeof(power_heat_data) == LEN_power_heat_data)
-                {
-                    /* 只覆盖本类载荷及其接收历史，避免高优先级控制读取到半份报文。 */
-                    saved_primask = __get_PRIMASK();
-                    __disable_irq();
-                    __DMB();
-                    memcpy(&power_heat_data, &data[index + 7U], sizeof(power_heat_data));
-                    g_judge_power_heat_rx.update_ms = HAL_GetTick();
-                    g_judge_power_heat_rx.valid = true;
-                    __DMB();
-                    __set_PRIMASK(saved_primask);
-                }
-            }    break;
+            case ID_robot_status:                 judge_copy_if_length(&robot_status, &data[index + 7U], frame_header.data_length, LEN_robot_status); break;
+            case ID_power_heat_data:              judge_copy_if_length(&power_heat_data, &data[index + 7U], frame_header.data_length, LEN_power_heat_data); break;
             case ID_robot_pos:                    judge_copy_if_length(&robot_pos, &data[index + 7U], frame_header.data_length, LEN_robot_pos); break;
             case ID_buff:                         judge_copy_if_length(&buff, &data[index + 7U], frame_header.data_length, LEN_buff); break;
             case ID_air_support_data:             judge_copy_if_length(&air_support_data, &data[index + 7U], frame_header.data_length, LEN_air_support_data); break;

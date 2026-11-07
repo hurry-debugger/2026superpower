@@ -48,11 +48,12 @@ void SupercapCan_SendStatus(void)
     __DMB();
     __set_PRIMASK(primask);
 
-    if(errors.bits.cap_overvoltage)
+    /* 内部字段按电压异常命名，线上仍显式映射原故障位；其他原因由 PROTECT 体现。 */
+    if(errors.bits.cap_voltage)
         faults |= SUPERCAP_CAN_FAULT_CAP_OVERVOLTAGE;
-    if(errors.bits.chassis_overvoltage)
+    if(errors.bits.chassis_voltage)
         faults |= SUPERCAP_CAN_FAULT_CHASSIS_OVERVOLTAGE;
-    if(errors.bits.bat_undervoltage)
+    if(errors.bits.bat_voltage)
         faults |= SUPERCAP_CAN_FAULT_BAT_UNDERVOLTAGE;
     if(errors.bits.referee)
         faults |= SUPERCAP_CAN_FAULT_REFEREE;

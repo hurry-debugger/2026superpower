@@ -491,21 +491,7 @@ typedef struct
 } radar_cmd_t;
 #pragma pack()
 
-/**
- * @brief 控制所需单类裁判报文的接收历史，不属于线上协议布局。
- * @note 上电零初始化；仅串口解析上下文在数据发布临界区内更新。
- *       ADC1 控制上下文优先级高于串口，读取期间不会被发布者抢占。
- *       valid 区分从未收到与毫秒时间戳为零；两类报文分别判断超时。
- */
-typedef struct
-{
-    uint32_t update_ms; /**< 最近一次完整有效报文的接收发布时间，单位 ms。 */
-    bool valid; /**< 已发布过完整有效数据；坏帧不清除，交由超时判断失效。 */
-} JudgeRxState_t;
-
-extern JudgeRxState_t g_judge_robot_status_rx; /**< 0x0201 独立接收历史。 */
-extern JudgeRxState_t g_judge_power_heat_rx; /**< 0x0202 独立接收历史。 */
-extern frame_header_t frame_header;
+extern uint32_t g_judge_rx_update_ms; /**< 0x0201 独立接收历史。 */
 
 /* ==================== 外部变量声明 ==================== */
 /* 比赛状态类 */

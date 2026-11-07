@@ -1,6 +1,6 @@
 /**
  * @file prot_supercap.h
- * @brief 兼容旧超电工程的经典 CAN 报文与底盘模式。
+ * @brief 兼容旧超电工程的经典 CAN 报文；接收字节不控制超电运行模式。
  */
 #ifndef SUPERPOWER_PROT_SUPERCAP_H
 #define SUPERPOWER_PROT_SUPERCAP_H
@@ -10,7 +10,6 @@
 #define SUPERCAP_CAN_RX_MODE_ID (0x010U)
 #define SUPERCAP_CAN_TX_MEASUREMENT_ID (0x100U)
 #define SUPERCAP_CAN_TX_STATE_ID (0x101U)
-#define SUPERCAP_CAN_REMOTE_PROTECT (1U)
 
 /** @brief 旧协议故障字节的已实现位；其他旧位不虚构故障检测。 */
 #define SUPERCAP_CAN_FAULT_CAP_OVERVOLTAGE (1U << 0)
@@ -24,7 +23,7 @@
 /** @brief 协议接收值与发送统计；仅协议实现写入，其他模块只读。 */
 typedef struct
 {
-    volatile uint8_t chassis_mode; /**< RX IRQ 发布的原子字节；1 请求保护，其他值解除。 */
+    volatile uint8_t chassis_mode; /**< RX IRQ 记录的旧协议原始字节，不参与超电运行模式控制。 */
     uint32_t tx_busy_count; /**< Master 发送时 FIFO 满而丢弃的帧数，自然回绕。 */
     uint32_t tx_error_count; /**< Master 发送 HAL 失败的帧数，自然回绕。 */
 } SupercapCan_t;

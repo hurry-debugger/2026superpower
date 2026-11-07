@@ -96,18 +96,16 @@ typedef struct
 /**
  * @brief 每路校准输入和拟合错误；各成员 1 表示错误有效，0 表示无该错误。
  * @note 首个错误即停止本通道拟合，仅通过成员访问，不依赖位域布局。
- *       missing_point、nonfinite 保留名称但始终为 0；缺失和非有限值归入对应范围错误。
+ *       缺失和非有限输入由计数范围或实测值范围错误统一报告，不另存同义字段。
  */
 typedef struct
 {
-    uint32_t missing_point : 1; /**< 缺失采集点的保留项；当前由计数/实测值范围错误报告。 */
-    uint32_t nonfinite : 1; /**< 非有限输入的保留项；当前由计数/实测值范围错误报告。 */
     uint32_t count_range : 1; /**< 原始计数越界：不在 [0,4095]，包括 NaN 或无穷值。 */
     uint32_t zero_variance : 1; /**< 计数零方差：全部原始计数相同，无法拟合增益。 */
     uint32_t gain_nonpositive : 1; /**< 增益非正：拟合方向错误或窄化为 float 后下溢为零。 */
     uint32_t numeric_range : 1; /**< 数值溢出：系数或全量程换算相关值不可由 float 表示。 */
     uint32_t value_range : 1; /**< 物理量越界：实测值非法或校准区间拟合端点幅值超限。 */
-    uint32_t reserved : 25; /**< 保留，保持为 0。 */
+    uint32_t reserved : 27; /**< 保留，保持为零；错误结构仍为一个 32 位字。 */
 } AdcCalibrationChannelError_t;
 
 /** @brief UID 匹配和启动拟合状态；全部通道有效且无板卡问题才允许控制。 */
@@ -135,7 +133,8 @@ extern AdcCalibrationState_t g_adc_calibration_state;
  * @pre 仅在启动主线程、功率输出关闭且消费者尚未运行时调用。
  * @note 不读取硬件 UID，不直接修改全局状态；有效通道缓存拟合系数，其他通道
  *       保留理论值供观察。输入与校准区间拟合极值直接复用 power_ctrl_config.h
- *       中的峰值；电池电压共用底盘上限，两路电流共用电容电流上限。
+ *       中的峰值，底盘和电容共用 31 V，两路电流沿用电容电流上限。
+ *       电池实测电压只要求非负有限，不设置物理上限；原始计数、正增益及可表示性检查保留。
  *       校准区间以外仅检查换算的 float 可表示性，不保证实板精度或允许误差。
  */
 AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id);

@@ -1,5 +1,5 @@
 /** @file power_ctrl.h
- * @brief 固定开环波形、超电四环闭环控制及两状态保护。
+ * @brief 25 kHz 过流/控制、1 kHz 普通保护及自动恢复。
  */
 #ifndef SUPERPOWER_POWER_CTRL_H
 #define SUPERPOWER_POWER_CTRL_H
@@ -11,7 +11,7 @@
 typedef enum
 {
     PROTECT_MODE = 0,
-    CTRL_MODE = 2
+    CTRL_MODE = 1
 } PowerCtrlState_e;
 
 /**
@@ -24,33 +24,30 @@ typedef union
     uint32_t all; /**< 完整错误字；0 表示无错误，非 0 表示存在错误。 */
     struct
     {
-        uint32_t cap_overvoltage : 1; /**< 电容过压：电压超过阈值并达到连续次数。 */
-        uint32_t chassis_overvoltage : 1; /**< 底盘过压：电压超过阈值，恢复采用迟滞判断。 */
-        uint32_t bat_undervoltage : 1; /**< 电池欠压：电压低于阈值并达到连续次数。 */
-        uint32_t referee : 1; /**< 裁判数据异常：闭环模式任一所需报文无效或接收超时。 */
-        uint32_t calibration : 1; /**< 校准异常：板卡识别失败或任一通道校准未通过。 */
-        uint32_t sample : 1; /**< 采样数值异常：五路反馈中存在 NaN 或无穷值，不含停更检测。 */
-        uint32_t config : 1; /**< 控制配置异常：闭环参数/PWM 未就绪或运行状态非法。 */
-        uint32_t numeric : 1; /**< 运算条件异常：反馈非有限、电压非正或输出非有限。 */
-        uint32_t remote : 1; /**< 远程保护请求：CAN 底盘模式命令为 1。 */
-        uint32_t short_circuit : 1; /**< 底盘低压且电流越限，单次触发锁存至 MCU 复位。 */
-        uint32_t reserved : 22; /**< 保留，保持为 0。 */
+        uint32_t cap_voltage : 1; /**< 电容电压不满足 (0,31] V，含无效数值。 */
+        uint32_t chassis_voltage : 1; /**< 底盘电压异常或分级过压累计达到门槛。 */
+        uint32_t bat_voltage : 1; /**< 电池电压非有限或不足 15 V，无物理电压上限。 */
+        uint32_t referee : 1; /**< 共用接收时间戳超时，不代表完整报文有效性检查。 */
+        uint32_t calibration : 1; /**< 启动时全通道校准掩码不完整，运行期不变。 */
+        uint32_t power_off : 1; /**< 裁判关闭底盘输出，不重复判断电池电压。 */
+        uint32_t short_circuit : 1; /**< 底盘电流绝对值超过 30 A，锁存至 MCU 复位。 */
+        uint32_t reserved : 25; /**< 保留，保持为零。 */
     } bits; /**< 按具体错误类型读写的位域视图，与 all 共用存储。 */
 } PowerCtrlError_t;
 
 /**
- * @brief App 唯一写入的控制状态，其他文件按约定只读，不可重入访问。
- * @note 功率反馈、目标、限流和占空比为控制计算记录，保护期间不代表全都实时更新。
+ * @brief ADC 管理输出和 PID，Master 发布普通错误及保护状态。
+ * @note volatile 标明共享访问，快照及错误字发布仍需短临界区保证一致性。
+ *       功率、目标、限流及占空比在保护期间不全部实时更新。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
- *       开环仅更新 state/errors，其余控制记录保持初始化值，不表示 PWM 实际占空比。
+ *       开环回调只设置 state；反馈、错误及其余控制记录保持初始化值。
  */
 typedef struct
 {
-    PowerCtrlState_e state;
-    PowerCtrlError_t errors; /**< 本周期错误及短路锁存，支持位域访问及整数汇总。 */
-    uint32_t cap_overvoltage_cnt;
-    uint32_t chassis_overvoltage_cnt;
-    uint32_t bat_undervoltage_cnt;
+    volatile PowerCtrlState_e state;
+    volatile PowerCtrlError_t errors; /**< 普通错误重算，校准汇总与短路锁存保留。 */
+    volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；错误发布或进入 CTRL 时清零。 */
+    uint32_t chassis_overvoltage_cnt; /**< 仅 1 kHz 更新的加权累计，范围 0～300。 */
     float power_feedback_w; /**< chassis 端 V*I，带符号 W。 */
     float power_target_w; /**< 限制后的目标 W。 */
     float current_limit_a; /**< 15*Vcap/Vchassis，单位 A。 */
@@ -64,28 +61,33 @@ typedef struct
 extern PowerCtrl_t g_power_ctrl;
 
 /**
- * @brief 关闭输出、清除状态，上电进入 PROTECT；仅闭环初始化四个 PID。
- * @pre MX_HRTIM1_Init 已完成；唯一调用上下文，无并发外设写入。
- * @note 仅启动时调用，清除短路锁存；不提供运行期故障清除接口。
+ * @brief 共用启动初始化：关闭输出、清零状态、进入 PROTECT 并初始化四环。
+ * @pre MX_HRTIM1_Init 已完成，计数器和控制中断尚未启动；仅调用一次。
+ * @note 仅此入口清除短路锁存；闭环调度随后设置校准汇总并预先检查普通错误。
  *       不初始化采样或裁判存储，不启动计数器，不修改外设配置。
  */
 void PowerCtrl_Init(void);
+
 /**
- * @brief 每 25 kHz 周期更新错误并管理输出；闭环计算四环，开环保持固定 50% 波形。
- * @pre 必须先调用 PowerCtrl_Init；唯一固定周期调用者，每次 ADC1 TC 先更新五路反馈。
- *      控制周期为 POWER_CTRL_PERIOD_US，同一上下文先完成 BSP 处理，再调用 Task。
- *      CubeMX 已将 A/B 的 CMP1/CMP2 配置为周期的 1/4、3/4，保留互补死区及半周期错相。
- *      首次 ADC1 TC 前，计数器及比较值装载已运行至少一个完整 PWM 周期。
- *      闭环 HAL_GetTick 保持单调毫秒时基；裁判仅由低优先级串口上下文原子发布。
- * @note 开环必须外部断开驱动供电或信号，软件不能保证有 PWM 时 MOS 不动作。
- *       开环首次 Task 自动开启；仅远程保护、PWM 未就绪或非法状态阻止输出。
- *       开环不运行 PID、不写比较值，不检查校准、采样、电压、参数或裁判门槛；解除远程保护后恢复。
- *       闭环在 switch 前统一计算并检查前馈；PROTECT 每周期关断并预置有效平衡点。
- *       首次全部运行条件有效且完成预置后开始计时，毫秒差值达到 500 即转 CTRL。
- *       普通故障取消等待；短路单次锁存至 MCU 复位，不自动恢复。
- *       闭环 PROTECT 转 CTRL 时复位四环及目标记录，使用已装载平衡点单次开启输出，随后计算控制。
- *       持续 CTRL 不重复开启；运算异常本周期立即关断；不额外增加 tick 或装载等待阶段。
- *       两模式均不检测采样停更或执行超期；输出及控制状态只能由 ADC1 DMA 上下文管理。
+ * @brief 1 kHz 更新普通故障、分级过压累计及下电条件。
+ * @pre 启动时已设置 calibration 汇总位；运行期只由 Master 1 kHz 调用。
+ *      允许在 ADC 启动前预调用一次，零初始电压使首次周期检查前保持保护。
+ * @note 快照只复制三个电压和错误字；区外计算，发布时保留最新短路位。
+ *       有错误即发布 PROTECT 并清零恢复计数，下一次 ADC 控制关断 PWM。
+ *       无错误不直接开启或复位 PID；校准汇总和短路锁存不随普通故障解除。
+ *       裁判时间戳沿用现有接收代码，不提供新的报文有效性判据。
+ */
+void PowerCtrl_UpdateErrors(void);
+
+/**
+ * @brief 25 kHz 检查底盘过流，执行状态切换及四环控制。
+ * @pre ADC1 TC 先完成五路反馈处理；控制周期为 POWER_CTRL_PERIOD_US。
+ *      ADC1 DMA 优先级 0、Master 为 1；计数器及预装载已运行至少一个 PWM 周期。
+ * @note 短路只判断底盘电流绝对值，命中置位并转 PROTECT，同周期关断，禁止自动重启。
+ *       普通错误由 Master 更新，不在此重复检测；PROTECT 每周期关断并预置前馈。
+ *       第 12501 个连续正常控制周期复位四环、清零计数并单次开启；持续 CTRL 不重复开启。
+ *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
+ *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
 void PowerCtrl_Task(void);
 

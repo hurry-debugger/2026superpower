@@ -73,6 +73,9 @@ void Error_Handler(void);
 #define POWER_CTRL_CLOSED_LOOP
 /* #define POWER_CTRL_OPEN_LOOP */
 
+#if (defined(POWER_CTRL_CLOSED_LOOP) + defined(POWER_CTRL_OPEN_LOOP)) != 1
+#error Select_exactly_one_power_control_mode_in_main_h
+#endif
 
 /* USER CODE END Private defines */
 

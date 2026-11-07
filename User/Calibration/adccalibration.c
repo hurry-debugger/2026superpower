@@ -24,14 +24,14 @@ static AdcCalibrationCoeff_t s_coefficients[ADC_CHANNEL_COUNT] =
     [V_CAP] = {ADC_V_CAP_RATIO, -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO}
 };
 
-/** @brief 直接复用控制配置的物理量上限；电压单位 V，电流单位 A。 */
+/** @brief 校准实测值边界 V/A；电池仅以 FLT_MAX 检查可表示性，无物理上限。 */
 static const float s_value_limits[ADC_CHANNEL_COUNT] =
 {
-    [V_CHASSIS] = POWER_CTRL_CHASSIS_OVERVOLTAGE_V,
-    [V_BAT] = POWER_CTRL_CHASSIS_OVERVOLTAGE_V,
+    [V_CHASSIS] = POWER_CTRL_OVERVOLTAGE_V,
+    [V_BAT] = FLT_MAX,
     [I_BAT] = POWER_CTRL_CAP_CURRENT_MAX_A,
     [I_CHASSIS] = POWER_CTRL_CAP_CURRENT_MAX_A,
-    [V_CAP] = POWER_CTRL_CAP_OVERVOLTAGE_V
+    [V_CAP] = POWER_CTRL_OVERVOLTAGE_V
 };
 
 /* ==================== 私有接口声明 ==================== */
@@ -92,9 +92,7 @@ AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id)
                 &g_adc_calibration_records[supercap_id], (AdcChannel_e)channel,
                 &s_coefficients[channel]);
 
-            if(!state.channel_errors[channel].missing_point
-               && !state.channel_errors[channel].nonfinite
-               && !state.channel_errors[channel].count_range
+            if(!state.channel_errors[channel].count_range
                && !state.channel_errors[channel].zero_variance
                && !state.channel_errors[channel].gain_nonpositive
                && !state.channel_errors[channel].numeric_range
@@ -197,7 +195,8 @@ static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
             double bias = real_mean - gain * raw_mean;
 
             /*
-             * 运行保护峰值只约束实际校准区间内的拟合极值，不约束量程外推值。
+             * 底盘/电容电压及电流的物理边界只约束校准区间，不约束量程外推。
+             * 电池不设置物理上限，只要求区间端点仍可由 float 表示。
              * 全 ADC 量程仅检查 float 可表示性，避免窄区间产生的异常斜率溢出。
              * 结果集中在此校验，通过后才窄化并更新缓存系数。
              */
