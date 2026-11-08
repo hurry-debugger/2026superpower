@@ -1,7 +1,8 @@
 /**
  * @file pid.c
- * @brief Taurus-arm 指定 PID 库的本工程副本，保留原计算及公开类型。
- * @details 来源 Hongxi Wong V1.0.6；保留计算算法，复位仅清运行状态并保留参数。
+ * @brief Taurus-arm PID 库的本工程副本，提供可选的外部限幅抗积分饱和。
+ * @details 来源 Hongxi Wong V1.0.6；基础算法保留，新增受 Improve 控制的限幅计算入口。
+ *          复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       原位置式死区分支输出 0（死区为 0 时误差恰为 0 亦如此），增量式
  *       Ki 为 0 时输出清零。本轮保留这些行为；应用层禁用电机堵转检测。
@@ -34,7 +35,7 @@ static void f_PID_param_init(
     float output_filtering_coefficient,
     float derivative_filtering_coefficient,
 
-    uint8_t improve)
+    uint16_t improve)
 {
     pid->DeadBand = deadband;
     pid->IntegralLimit = intergral_limit;
@@ -147,6 +148,41 @@ float PID_Calculate(PID_TypeDef *pid, float measure, float target)
     pid->Last_Output = pid->Output;
     pid->Last_Dout = pid->Dout;
     pid->Last_Err = pid->Err;
+
+    return pid->Output;
+}
+
+/**
+ * @brief 在原位置式算法外执行可选的抗积分饱和，不重复积累同一次采样历史。
+ * @note before 必须保存完整计算前状态：重算还会读取误差、微分及滤波历史，
+ *       不能只恢复 Iout；快照只在本次调用内使用，不新增永久运行状态。
+ */
+float PID_CalculateConstrained(PID_TypeDef *pid, float measure, float target,
+                               float lower, float upper)
+{
+    if(pid->Improve & PID_EXTERNAL_ANTI_WINDUP)
+    {
+        PID_TypeDef before = *pid;
+
+        PID_Calculate(pid, measure, target);
+        if((pid->Output >= upper && pid->Iout > before.Iout)
+           || (pid->Output <= lower && pid->Iout < before.Iout))
+        {
+            *pid = before;
+            pid->Ki = 0.0f;
+            PID_Calculate(pid, measure, target);
+            pid->Ki = before.Ki;
+        }
+    }
+    else
+    {
+        PID_Calculate(pid, measure, target);
+    }
+
+    if(pid->Output < lower)
+        pid->Output = lower;
+    else if(pid->Output > upper)
+        pid->Output = upper;
 
     return pid->Output;
 }
@@ -314,7 +350,7 @@ void PID_Init(PID_TypeDef *pid, float max_out, float intergral_limit, float dead
 
     float A, float B,
 
-    float output_filtering_coefficient, float derivative_filtering_coefficient, uint8_t improve)
+    float output_filtering_coefficient, float derivative_filtering_coefficient, uint16_t improve)
 {
     pid->PID_param_init = f_PID_param_init;
     pid->PID_reset = f_PID_reset;

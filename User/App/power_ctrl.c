@@ -14,7 +14,6 @@
 
 #include <float.h>
 #include <math.h>
-#include <stdbool.h>
 #include <string.h>
 
 /* ==================== 私有声明 ==================== */
@@ -24,8 +23,6 @@ static void PowerCtrl_DutyCalcu(void);
 static void PowerCtrl_CascadePidCalcu(void);
 static void PowerCtrl_ResetLoops(void);
 static float PowerCtrl_Clamp(float value, float lower, float upper);
-static float PowerCtrl_ConstrainPid(PID_TypeDef *pid, const PID_TypeDef *before,
-                                  float measure, float target, float lower, float upper);
 
 PowerCtrl_t g_power_ctrl;
 /* ==================== 公共入口 ==================== */
@@ -48,7 +45,7 @@ void PowerCtrl_Init(void)
     PID_Init(&g_power_ctrl.power_pid, POWER_CTRL_CAP_CURRENT_MAX_A,
              POWER_CTRL_CAP_CURRENT_MAX_A, 0.0f,
              0.0f, 0.0f, 0.0f,
-             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit);
+             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit | PID_EXTERNAL_ANTI_WINDUP);
     PID_Init(&g_power_ctrl.voltage_pid, POWER_CTRL_CAP_CURRENT_MAX_A,
              POWER_CTRL_CAP_CURRENT_MAX_A, 0.0f,
              0.0f, 0.0f, 0.0f,
@@ -56,7 +53,7 @@ void PowerCtrl_Init(void)
     PID_Init(&g_power_ctrl.current_pid, BSP_HRTIM_GENERALIZED_DUTY_MAX,
              BSP_HRTIM_GENERALIZED_DUTY_MAX, 0.0f,
              0.0f, 0.0f, 0.0f,
-             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit);
+             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit | PID_EXTERNAL_ANTI_WINDUP);
 }
 
 void PowerCtrl_Task(void)
@@ -219,9 +216,8 @@ static void PowerCtrl_DutyCalcu(void)
 
 /**
  * @brief 正常控制的能量、功率、电压竞争和电流串级计算，不操作硬件输出。
- * @details 各级直接使用 PID 的 Output；保留抗饱和重算需要的计算前快照。
- *          电流目标暂存至外环抗饱和判断完成，竞争结果只记录本次重算前的比较。
- *          电压环 Output 表示允许的正向电流 A，未竞争时取当前电流上限。
+ * @details 能量环、电压环只做普通 PID 计算与输出限幅。
+ *          先得到电压环允许的正向电流，再由 PID 库约束功率环和电流环。
  *          电流环 Output 为广义占空比修正，叠加 Vcap/Vchassis 前馈后限幅。
  * @pre 反馈由 ADC 本周期更新，普通电压错误由 1 kHz 发布；generalized_duty 为本周期前馈。
  */
@@ -231,91 +227,52 @@ static void PowerCtrl_CascadePidCalcu(void)
     g_power_ctrl.power_feedback_w = g_bsp_adc_feedback.adc_convert[V_CHASSIS]
         * g_bsp_adc_feedback.adc_convert[I_CHASSIS];
 
-    PID_TypeDef energy_before = g_power_ctrl.energy_pid;
-    /* 重算可能改变功率环输出；外环仍需知道重算前是否受电压环限制。 */
-    bool voltage_competing = false;
     PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
                   POWER_CTRL_ENERGY_TARGET_J);
-    g_power_ctrl.energy_pid.Output = PowerCtrl_ConstrainPid(
-        &g_power_ctrl.energy_pid, &energy_before,
-        power_heat_data.buffer_energy, POWER_CTRL_ENERGY_TARGET_J,
-        robot_status.chassis_power_limit - fminf(robot_status.chassis_power_limit,
-            POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]),
-        robot_status.chassis_power_limit - fmaxf(POWER_CTRL_POWER_MAX_W,
-            -POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]));
-    g_power_ctrl.power_target_w = PowerCtrl_Clamp(
-        robot_status.chassis_power_limit - g_power_ctrl.energy_pid.Output,
-        fmaxf(POWER_CTRL_POWER_MAX_W,
-              -POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]),
-        fminf(robot_status.chassis_power_limit,
-              POWER_CTRL_CAP_CURRENT_MAX_A * g_bsp_adc_feedback.adc_convert[V_CAP]));
 
-    PID_TypeDef power_before = g_power_ctrl.power_pid;
-    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_limit_a;
-    g_power_ctrl.power_pid.IntegralLimit = g_power_ctrl.current_limit_a;
-    PID_Calculate(&g_power_ctrl.power_pid, g_power_ctrl.power_feedback_w,
-                  g_power_ctrl.power_target_w);
+    g_power_ctrl.power_target_w = g_power_ctrl.energy_pid.Output;
+
     if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V)
     {
-        PID_TypeDef voltage_before = g_power_ctrl.voltage_pid;
         g_power_ctrl.voltage_pid.MaxOut = g_power_ctrl.current_limit_a;
         g_power_ctrl.voltage_pid.IntegralLimit = g_power_ctrl.current_limit_a;
         PID_Calculate(&g_power_ctrl.voltage_pid,
             g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
-        g_power_ctrl.voltage_pid.Output = PowerCtrl_ConstrainPid(
-            &g_power_ctrl.voltage_pid, &voltage_before,
-            g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V,
-            0.0f, g_power_ctrl.current_limit_a);
+        g_power_ctrl.voltage_pid.Output = PowerCtrl_Clamp(
+            g_power_ctrl.voltage_pid.Output, 0.0f, g_power_ctrl.current_limit_a);
         if(g_bsp_adc_feedback.adc_convert[V_CAP] >= POWER_CTRL_CAP_TARGET_V
            && g_power_ctrl.voltage_pid.Output >= 0.0f
            && g_power_ctrl.voltage_pid.Output <= g_power_ctrl.current_limit_a)
             g_power_ctrl.voltage_pid.Output = 0.0f;
-        voltage_competing = g_power_ctrl.power_pid.Output > g_power_ctrl.voltage_pid.Output;
     }
     else
     {
         g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
         g_power_ctrl.voltage_pid.Output = g_power_ctrl.current_limit_a;
     }
-    /* 暂存限幅结果，避免覆盖外环抗饱和判断仍需读取的功率环原始输出。 */
-    float current_target_a = PowerCtrl_ConstrainPid(
-        &g_power_ctrl.power_pid, &power_before,
+
+    /* 电流环饱和后仍需读取功率环计算前积分，不能用已更新的 Iout 替代此快照。 */
+    float power_iout_before = g_power_ctrl.power_pid.Iout;
+    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_limit_a;
+    g_power_ctrl.power_pid.IntegralLimit = g_power_ctrl.current_limit_a;
+    PID_CalculateConstrained(&g_power_ctrl.power_pid,
         g_power_ctrl.power_feedback_w, g_power_ctrl.power_target_w,
         -g_power_ctrl.current_limit_a, g_power_ctrl.voltage_pid.Output);
 
-    /* 在保存限幅结果前使用功率环原始输出，保留外环抗积分饱和判断。 */
-    if(((g_power_ctrl.power_pid.Output > g_power_ctrl.voltage_pid.Output
-         || voltage_competing)
-        && g_power_ctrl.energy_pid.Iout < energy_before.Iout)
-       || (g_power_ctrl.power_pid.Output < -g_power_ctrl.current_limit_a
-           && g_power_ctrl.energy_pid.Iout > energy_before.Iout))
-        g_power_ctrl.energy_pid.Iout = energy_before.Iout;
-    g_power_ctrl.power_pid.Output = current_target_a;
-
-    PID_TypeDef current_before = g_power_ctrl.current_pid;
-    PID_Calculate(&g_power_ctrl.current_pid,
-        g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output);
-    g_power_ctrl.current_pid.Output = PowerCtrl_ConstrainPid(
-        &g_power_ctrl.current_pid, &current_before,
+    PID_CalculateConstrained(&g_power_ctrl.current_pid,
         g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
         BSP_HRTIM_GENERALIZED_DUTY_MIN - g_power_ctrl.generalized_duty,
         BSP_HRTIM_GENERALIZED_DUTY_MAX - g_power_ctrl.generalized_duty);
 
-    /* 内环已到占空比边界时，外环停止积累同向请求。 */
+    /* 内环已到占空比边界时，功率环停止积累同向请求。 */
     if((g_power_ctrl.current_pid.Output >= BSP_HRTIM_GENERALIZED_DUTY_MAX
             - g_power_ctrl.generalized_duty
-        && g_power_ctrl.power_pid.Iout > power_before.Iout)
+        && g_power_ctrl.power_pid.Iout > power_iout_before)
        || (g_power_ctrl.current_pid.Output <= BSP_HRTIM_GENERALIZED_DUTY_MIN
             - g_power_ctrl.generalized_duty
-           && g_power_ctrl.power_pid.Iout < power_before.Iout))
-        g_power_ctrl.power_pid.Iout = power_before.Iout;
-    if((g_power_ctrl.current_pid.Output >= BSP_HRTIM_GENERALIZED_DUTY_MAX
-            - g_power_ctrl.generalized_duty
-        && g_power_ctrl.energy_pid.Iout < energy_before.Iout)
-       || (g_power_ctrl.current_pid.Output <= BSP_HRTIM_GENERALIZED_DUTY_MIN
-            - g_power_ctrl.generalized_duty
-           && g_power_ctrl.energy_pid.Iout > energy_before.Iout))
-        g_power_ctrl.energy_pid.Iout = energy_before.Iout;
+           && g_power_ctrl.power_pid.Iout < power_iout_before))
+        g_power_ctrl.power_pid.Iout = power_iout_before;
+        
     g_power_ctrl.generalized_duty = PowerCtrl_Clamp(
         g_power_ctrl.generalized_duty + g_power_ctrl.current_pid.Output,
         BSP_HRTIM_GENERALIZED_DUTY_MIN, BSP_HRTIM_GENERALIZED_DUTY_MAX);
@@ -341,26 +298,4 @@ static float PowerCtrl_Clamp(float value, float lower, float upper)
     else if(value > upper)
         value = upper;
     return value;
-}
-
-static float PowerCtrl_ConstrainPid(PID_TypeDef *pid, const PID_TypeDef *before,
-                                    float measure, float target, float lower, float upper)
-{
-    /* 原库计算一次后，若本次积分继续推动外部饱和，则回到计算前状态，
-     * 暂时以 Ki=0 重算同一次采样，保留以前的积分补偿，不修改库算法。 */
-    float integral_delta = pid->Iout - before->Iout;
-    if((pid->Output >= upper && integral_delta > 0.0f)
-       || (pid->Output <= lower && integral_delta < 0.0f))
-    {
-        float ki = pid->Ki;
-        float max_out = pid->MaxOut;
-        float integral_limit = pid->IntegralLimit;
-        *pid = *before;
-        pid->MaxOut = max_out;
-        pid->IntegralLimit = integral_limit;
-        pid->Ki = 0.0f;
-        PID_Calculate(pid, measure, target);
-        pid->Ki = ki;
-    }
-    return PowerCtrl_Clamp(pid->Output, lower, upper);
 }

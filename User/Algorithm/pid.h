@@ -1,7 +1,8 @@
 /**
  * @file pid.h
- * @brief Taurus-arm 指定 PID 库的本工程副本，保留原计算及公开类型。
- * @details 来源 Hongxi Wong V1.0.6；保留计算算法，复位仅清运行状态并保留参数。
+ * @brief Taurus-arm PID 库的本工程副本，提供可选的外部限幅抗积分饱和。
+ * @details 来源 Hongxi Wong V1.0.6；基础算法保留，新增受 Improve 控制的限幅计算入口。
+ *          复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       原位置式死区分支输出 0（死区为 0 时误差恰为 0 亦如此），增量式
  *       Ki 为 0 时输出清零。本轮保留这些行为；应用层禁用电机堵转检测。
@@ -32,6 +33,7 @@ typedef enum pid_Improvement_e
     ChangingIntegralRate = 0x20,
     DerivativeFilter = 0x40,
     ErrorHandle = 0x80,
+    PID_EXTERNAL_ANTI_WINDUP = 0x100U, /**< 外部限幅时撤销继续推动饱和的本次积分。 */
 } PID_Improvement_e;
 
 typedef enum errorType_e
@@ -83,7 +85,7 @@ typedef struct _PID_TypeDef
     uint32_t lasttime;
     uint8_t dtime;
 
-    uint8_t Improve;
+    uint16_t Improve;
 
     PID_ErrorHandler_t ERRORHandler;
 
@@ -99,7 +101,7 @@ typedef struct _PID_TypeDef
         float B,
         float output_filtering_coefficient,
         float derivative_filtering_coefficient,
-        uint8_t improve);
+        uint16_t improve);
 
     /**
      * @brief 清零运行状态及历史，保留全部参数和函数指针。
@@ -118,9 +120,23 @@ void PID_Init(PID_TypeDef *pid, float max_out, float intergral_limit, float dead
 
     float A, float B,
 
-    float output_filtering_coefficient, float derivative_filtering_coefficient, uint8_t improve);
+    float output_filtering_coefficient, float derivative_filtering_coefficient, uint16_t improve);
 /** @brief 原库位置式计算；非空已初始化实例，measure/target 同单位；返回限幅输出。 */
 float PID_Calculate(PID_TypeDef *pid, float measure, float target);
+/**
+ * @brief 执行位置式 PID，并按外部上下限约束本次输出。
+ * @param[in,out] pid 已初始化的实例；Improve 含 PID_EXTERNAL_ANTI_WINDUP 时启用抗饱和。
+ * @param[in] measure 本次反馈，与 target 同单位。
+ * @param[in] target 本次目标，与 measure 同单位。
+ * @param[in] lower 外部输出下限，单位与 PID 输出一致。
+ * @param[in] upper 外部输出上限，单位与 PID 输出一致。
+ * @return 外部限幅后的输出，同时写入 pid->Output。
+ * @pre pid 非空，lower <= upper；不得与同一实例的计算或复位并发。
+ * @note 启用时仅撤销继续推动饱和的本次积分，以 Ki=0 重算同次采样，保留既有积分。
+ *       未启用时仅计算并限幅；基础算法、死区及 Last_Output 的更新方式沿用 PID_Calculate。
+ */
+float PID_CalculateConstrained(PID_TypeDef *pid, float measure, float target,
+                               float lower, float upper);
 /** @brief 外环及内环均位置式；外环输出作为内环目标，单位由应用约定。 */
 float PID_Cascade_Calculate(PID_TypeDef *pos_pid, PID_TypeDef *vel_pid, float pos_measure, float vel_measure, float pos_target);
 /** @brief 外环位置式、内环增量式；指针非空且均已初始化。 */
