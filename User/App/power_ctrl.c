@@ -22,7 +22,6 @@ static void PowerCtrl_ModeSwitch(void);
 static void PowerCtrl_DutyCalcu(void);
 static void PowerCtrl_CascadePidCalcu(void);
 static void PowerCtrl_ResetLoops(void);
-static float PowerCtrl_Clamp(float value, float lower, float upper);
 
 PowerCtrl_t g_power_ctrl;
 /* ==================== 公共入口 ==================== */
@@ -238,8 +237,7 @@ static void PowerCtrl_CascadePidCalcu(void)
         g_power_ctrl.voltage_pid.IntegralLimit = g_power_ctrl.current_limit_a;
         PID_Calculate(&g_power_ctrl.voltage_pid,
             g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
-        g_power_ctrl.voltage_pid.Output = PowerCtrl_Clamp(
-            g_power_ctrl.voltage_pid.Output, 0.0f, g_power_ctrl.current_limit_a);
+        OUTPUT_LIMIT(g_power_ctrl.voltage_pid.Output, g_power_ctrl.current_limit_a, 0.0f);
         if(g_bsp_adc_feedback.adc_convert[V_CAP] >= POWER_CTRL_CAP_TARGET_V
            && g_power_ctrl.voltage_pid.Output >= 0.0f
            && g_power_ctrl.voltage_pid.Output <= g_power_ctrl.current_limit_a)
@@ -273,9 +271,9 @@ static void PowerCtrl_CascadePidCalcu(void)
            && g_power_ctrl.power_pid.Iout < power_iout_before))
         g_power_ctrl.power_pid.Iout = power_iout_before;
         
-    g_power_ctrl.generalized_duty = PowerCtrl_Clamp(
-        g_power_ctrl.generalized_duty + g_power_ctrl.current_pid.Output,
-        BSP_HRTIM_GENERALIZED_DUTY_MIN, BSP_HRTIM_GENERALIZED_DUTY_MAX);
+    g_power_ctrl.generalized_duty += g_power_ctrl.current_pid.Output;
+    OUTPUT_LIMIT(g_power_ctrl.generalized_duty,
+                 BSP_HRTIM_GENERALIZED_DUTY_MAX, BSP_HRTIM_GENERALIZED_DUTY_MIN);
 }
 
 /* ==================== 私有辅助 ==================== */
@@ -289,13 +287,4 @@ static void PowerCtrl_ResetLoops(void)
     g_power_ctrl.power_target_w = 0.0f;
     g_power_ctrl.current_limit_a = 0.0f;
     /* generalized_duty 是本周期已检查的前馈，进入 CTRL 时仍需叠加 PID 修正。 */
-}
-
-static float PowerCtrl_Clamp(float value, float lower, float upper)
-{
-    if(value < lower)
-        value = lower;
-    else if(value > upper)
-        value = upper;
-    return value;
 }
