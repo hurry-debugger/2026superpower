@@ -6,7 +6,7 @@
 #ifndef SUPERPOWER_POWER_CTRL_CONFIG_H
 #define SUPERPOWER_POWER_CTRL_CONFIG_H
 
-/** @brief ADC1 每十次扫描产生 TC，控制周期 40 us，即 25 kHz。 */
+/** @brief ADC1 每十次扫描产生 TC，四环均每 40 us 计算，离散系数按本调用周期定义。 */
 #define POWER_CTRL_PERIOD_US (40U)
 /** @brief CubeMX 配置：170 MHz * 32 / 21760，PWM 周期 4 us。 */
 #define POWER_CTRL_PWM_PERIOD_US (4U)
@@ -21,7 +21,11 @@
 #define POWER_CTRL_CAP_NORMAL_VOLTAGE_V (12.0f)
 /** @brief 用户确认的低压充电平均目标上限 A，参考港科 RM2024；本板能力待测。 */
 #define POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A (4.0f)
-/** @brief 全局放电功率下限 W，另受实时电容功率限制。 */
+/**
+ * @brief 能量修正输出的对称范围参数 W，同时用于派生底盘 30 A 关断阈值。
+ * @note 能量 PID 的 MaxOut 为此值；IntegralLimit 虽登记相同值，NONE 下不启用。
+ *       此宏不直接限制 A 端目标功率；目标电流另受电容电压分段边界限制。
+ */
 #define POWER_CTRL_POWER_MAX_W (450.0f)
 /** @brief 用户确认的电容充电目标 V，独立于硬过压阈值。 */
 #define POWER_CTRL_CAP_TARGET_V (29.0f)
@@ -56,7 +60,7 @@
     (POWER_CTRL_RESTART_DELAY_MS * 1000U / POWER_CTRL_PERIOD_US)
 /** @brief 裁判共用接收时间戳超时 ms，仅闭环检查。 */
 #define POWER_CTRL_REFEREE_TIMEOUT_MS (300U)
-/** @brief 缓冲能量目标 J，旧工程参考初值。 */
+/** @brief 用户确认的缓冲能量目标 J；目标减反馈产生功率修正 u_E，随后从功率目标扣除。 */
 #define POWER_CTRL_ENERGY_TARGET_J (45.0f)
 
 #endif /* SUPERPOWER_POWER_CTRL_CONFIG_H */

@@ -5,7 +5,7 @@
  *          未启用跟踪的实例保留原算法；复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       跟踪模式在死区内保留积分输出，P/D/本次积分增量清零，并保留真实求和比例项。
- *       未启用时死区输出仍为 0；增量式 Ki 为 0 时输出清零。应用层禁用电机堵转检测。
+ *       未启用时死区输出仍为 0；增量式 Ki 为 0 时输出清零。当前应用四环 Improve 均为 NONE。
  */
 #ifndef _PID_H
 #define _PID_H
@@ -133,7 +133,8 @@ float PID_Calculate(PID_TypeDef *pid, float measure, float target);
  * @param[in] upper 外部输出上限，单位与 PID 输出一致。
  * @return 外部限幅后的输出，同时写入 pid->Output。
  * @pre pid 非空，lower <= upper；不得与同一实例的计算或复位并发。
- * @note 启用时在单次计算内拒绝继续推动饱和的本次积分，保留既有积分及当前积分限幅；
+ * @note 外部抗饱和启用时共用单次位置式核心，拒绝继续推动饱和的本次积分变化；
+ *       恢复旧积分后仍服从已启用的积分限幅，必要时仅重合成输出及输出滤波；
  *       不修改 Ki，不复制完整状态，P/D 和采样历史每次调用只更新一次。
  *       跟踪模式在外部截断后回算积分并对齐 Last_Output，动态边界缩小时不保留旧输出历史；
  *       未启用跟踪时沿用原限幅及 Last_Output 行为。跟踪实例不得启用 OutputFilter。
@@ -148,6 +149,7 @@ float PID_CalculateConstrained(PID_TypeDef *pid, float measure, float target,
  * @note 用实际输出减去本周期 Pout/Dout 回算积分，并限制到 IntegralLimit；
  *       Output/Last_Output 记录实际采用值，ITerm 清零。回算受积分范围限制，
  *       不保证下次候选完全重现跟踪值；本接口不更新测量或误差，须先执行本周期计算。
+ *       调用方须显式传入最终采用的输出，当前应用不调用本接口。
  */
 void PID_TrackOutput(PID_TypeDef *pid, float applied_output);
 /** @brief 外环及内环均位置式；外环输出作为内环目标，单位由应用约定。 */

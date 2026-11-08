@@ -26,7 +26,7 @@ typedef union
     {
         uint32_t cap_voltage : 1; /**< 电容电压不满足 (0,31] V，含无效数值。 */
         uint32_t chassis_voltage : 1; /**< 底盘电压异常或分级过压累计达到门槛。 */
-        uint32_t bat_voltage : 1; /**< 电池电压非有限或不足 15 V，无物理电压上限。 */
+        uint32_t bat_voltage : 1; /**< 电池电压不在 [15, ADC_V_BAT_MAX_V]，含无效数值。 */
         uint32_t referee : 1; /**< 共用接收时间戳超时，不代表完整报文有效性检查。 */
         uint32_t calibration : 1; /**< 启动时全通道校准掩码不完整，运行期不变。 */
         uint32_t power_off : 1; /**< 裁判关闭底盘输出，不重复判断电池电压。 */
@@ -38,8 +38,10 @@ typedef union
 /**
  * @brief ADC 管理输出、状态和 PID，Master 只发布普通错误字。
  * @note volatile 标明共享访问，快照及错误字发布仍需短临界区保证一致性。
- *       功率、目标、限流及占空比在保护期间不全部实时更新。
+ *       有效输入时功率成员先保存同周期 P_A/P_in，CTRL 才形成 A 端目标；
+ *       PROTECT 期间 power_target_w 不是有效控制目标，输入无效时记录也可能为旧值。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
+ *       四环 Improve 均为 NONE，不执行可选积分限幅、抗饱和、滤波或输出跟踪。
  *       开环不调用控制入口，测量与控制记录保持初值；Master 仍可更新错误字。
  */
 typedef struct
@@ -48,15 +50,15 @@ typedef struct
     volatile PowerCtrlError_t errors; /**< 普通错误重算，校准汇总与短路锁存保留。 */
     volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；保护条件成立或进入 CTRL 时清零。 */
     uint32_t chassis_overvoltage_cnt; /**< 仅 1 kHz 更新的加权累计，范围 0～300。 */
-    float power_feedback_w; /**< chassis 端 V*I，带符号 W。 */
-    float power_target_w; /**< 限制后的目标 W。 */
+    float power_feedback_w; /**< A 端 V_CHASSIS*I_CHASSIS，单位 W；正充电、负放电。 */
+    float power_target_w; /**< 先存入口 V_BAT*I_BAT，再原位形成 P_lim-P_in+P_A-u_E，W。 */
     float current_upper_limit_a; /**< A 端正向目标上界 A；B 端充电参考上限乘原始前馈。 */
     float current_lower_limit_a; /**< A 端负向目标下界 A；低于 5 V 为零，禁止主动请求放电。 */
     float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
-    PID_TypeDef energy_pid;
-    PID_TypeDef power_pid;
-    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；高于 26.1 V 参与竞争，其他周期跟踪。 */
-    PID_TypeDef current_pid;
+    PID_TypeDef energy_pid; /**< 45 J 能量误差生成修正 u_E，W；每个控制周期计算。 */
+    PID_TypeDef power_pid; /**< A 端目标与反馈之差等价于入口功率误差；输出目标电流 A。 */
+    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，高于 26.1 V 参与竞争。 */
+    PID_TypeDef current_pid; /**< A 端电流误差生成无量纲广义占空比修正。 */
 } PowerCtrl_t;
 
 extern PowerCtrl_t g_power_ctrl;
@@ -87,9 +89,12 @@ void PowerCtrl_UpdateErrors(void);
  * @note 短路只判断底盘电流绝对值，命中置位并转 PROTECT，同周期关断，禁止自动重启。
  *       前馈所需电压无效时直接保护并清恢复计数，不除法、不改普通错误位；
  *       普通错误仍由 Master 1 kHz 归因。原始 Vcap/Vchassis 低于 0.05 同样禁止开启。
+ *       V_BAT 须在 [15, ADC_V_BAT_MAX_V]，两路电流须在各自 ADC 理论量程内；
+ *       统一用有效范围拒绝异常，直接保护、清恢复计数，不新增错误位或重复检查功率乘积。
  *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
  *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
+ *       四环连续计算并保持 NONE；不按裁判帧更新，不执行可选积分限制或跟踪。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
 void PowerCtrl_Task(void);
