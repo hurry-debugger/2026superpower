@@ -11,8 +11,16 @@
 /** @brief CubeMX 配置：170 MHz * 32 / 21760，PWM 周期 4 us。 */
 #define POWER_CTRL_PWM_PERIOD_US (4U)
 
-/** @brief 用户确认的电容平均电流限值 A，理想功率换算模型。 */
-#define POWER_CTRL_CAP_CURRENT_MAX_A (15.0f)
+/** @brief 用户指定的正常电容平均目标参考上限 A；按电压比换算，不含效率补偿。 */
+#define POWER_CTRL_CAP_CURRENT_MAX_A (13.0f)
+/** @brief 用户指定的 B 端峰值设计约束 A；仅记录约束，本轮未实现峰值保护。 */
+#define POWER_CTRL_CAP_CURRENT_PEAK_A (15.0f)
+/** @brief 港科 RM2024 参考分界 V；低于此值仅允许充电目标，不主动请求放电。 */
+#define POWER_CTRL_CAP_LOW_VOLTAGE_V (5.0f)
+/** @brief 港科 RM2024 参考分界 V；达到后恢复正常平均目标，不是硬欠压门槛。 */
+#define POWER_CTRL_CAP_NORMAL_VOLTAGE_V (12.0f)
+/** @brief 用户确认的低压充电平均目标上限 A，参考港科 RM2024；本板能力待测。 */
+#define POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A (4.0f)
 /** @brief 全局放电功率下限 W，另受实时电容功率限制。 */
 #define POWER_CTRL_POWER_MAX_W (450.0f)
 /** @brief 用户确认的电容充电目标 V，独立于硬过压阈值。 */

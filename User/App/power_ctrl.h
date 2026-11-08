@@ -36,25 +36,26 @@ typedef union
 } PowerCtrlError_t;
 
 /**
- * @brief ADC 管理输出和 PID，Master 发布普通错误及保护状态。
+ * @brief ADC 管理输出、状态和 PID，Master 只发布普通错误字。
  * @note volatile 标明共享访问，快照及错误字发布仍需短临界区保证一致性。
  *       功率、目标、限流及占空比在保护期间不全部实时更新。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
- *       开环回调只设置 state；反馈、错误及其余控制记录保持初始化值。
+ *       开环不调用控制入口，测量与控制记录保持初值；Master 仍可更新错误字。
  */
 typedef struct
 {
     volatile PowerCtrlState_e state;
     volatile PowerCtrlError_t errors; /**< 普通错误重算，校准汇总与短路锁存保留。 */
-    volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；错误发布或进入 CTRL 时清零。 */
+    volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；保护条件成立或进入 CTRL 时清零。 */
     uint32_t chassis_overvoltage_cnt; /**< 仅 1 kHz 更新的加权累计，范围 0～300。 */
     float power_feedback_w; /**< chassis 端 V*I，带符号 W。 */
     float power_target_w; /**< 限制后的目标 W。 */
-    float current_limit_a; /**< 15*Vcap/Vchassis，单位 A。 */
-    float generalized_duty; /**< 无量纲；先存本周期前馈，CTRL 最后保存闭环输出，开环不使用。 */
+    float current_upper_limit_a; /**< A 端正向目标上界 A；B 端充电参考上限乘原始前馈。 */
+    float current_lower_limit_a; /**< A 端负向目标下界 A；低于 5 V 为零，禁止主动请求放电。 */
+    float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
     PID_TypeDef energy_pid;
     PID_TypeDef power_pid;
-    PID_TypeDef voltage_pid; /**< Output 为允许的充电电流 A，未竞争时为电流上限。 */
+    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；高于 26.1 V 参与竞争，其他周期跟踪。 */
     PID_TypeDef current_pid;
 } PowerCtrl_t;
 
@@ -73,7 +74,7 @@ void PowerCtrl_Init(void);
  * @pre 启动时已设置 calibration 汇总位；运行期只由 Master 1 kHz 调用。
  *      允许在 ADC 启动前预调用一次，零初始电压使首次周期检查前保持保护。
  * @note 快照只复制三个电压和错误字；区外计算，发布时保留最新短路位。
- *       有错误即发布 PROTECT 并清零恢复计数，下一次 ADC 控制关断 PWM。
+ *       只发布错误字，不操作 PWM 或 PID；ADC 下一周期据此保护并清零恢复计数。
  *       无错误不直接开启或复位 PID；校准汇总和短路锁存不随普通故障解除。
  *       裁判时间戳沿用现有接收代码，不提供新的报文有效性判据。
  */
@@ -84,8 +85,10 @@ void PowerCtrl_UpdateErrors(void);
  * @pre ADC1 TC 先完成五路反馈处理；控制周期为 POWER_CTRL_PERIOD_US。
  *      ADC1 DMA 优先级 0、Master 为 1；计数器及预装载已运行至少一个 PWM 周期。
  * @note 短路只判断底盘电流绝对值，命中置位并转 PROTECT，同周期关断，禁止自动重启。
- *       普通错误由 Master 更新，不在此重复检测；PROTECT 每周期关断并预置前馈。
- *       第 12501 个连续正常控制周期复位四环、清零计数并单次开启；持续 CTRL 不重复开启。
+ *       前馈所需电压无效时直接保护并清恢复计数，不除法、不改普通错误位；
+ *       普通错误仍由 Master 1 kHz 归因。原始 Vcap/Vchassis 低于 0.05 同样禁止开启。
+ *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
+ *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */

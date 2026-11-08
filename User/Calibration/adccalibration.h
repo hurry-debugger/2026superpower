@@ -40,7 +40,6 @@ extern "C"
 #define ADC_I_BAT_ZERO_V (1.65f)
 /** @brief 底盘电流通道零电流输出，单位 V；标称值，后续可独立标定。 */
 #define ADC_I_CHASSIS_ZERO_V (1.65f)
-
 /* ==================== 各通道转换参数 ==================== */
 
 /** @brief 底盘电压转换系数，单位 V/计数。 */
@@ -67,6 +66,22 @@ extern "C"
 #define ADC_I_BAT_OFFSET_COUNT (ADC_I_BAT_ZERO_V * ADC_FULL_SCALE_COUNT / ADC_REFERENCE_V)
 /** @brief 底盘电流零点，单位计数；允许与电池通道分别标定。 */
 #define ADC_I_CHASSIS_OFFSET_COUNT (ADC_I_CHASSIS_ZERO_V * ADC_FULL_SCALE_COUNT / ADC_REFERENCE_V)
+
+/** @brief 底盘电压 ADC 理论量程上限，单位 V；由分压比和 ADC 满量程推导。 */
+#define ADC_V_CHASSIS_MAX_V ((ADC_FULL_SCALE_COUNT - ADC_V_CHASSIS_OFFSET_COUNT) * ADC_V_CHASSIS_RATIO)
+/** @brief 电池电压 ADC 理论量程上限，单位 V；由分压比和 ADC 满量程推导。 */
+#define ADC_V_BAT_MAX_V ((ADC_FULL_SCALE_COUNT - ADC_V_BAT_OFFSET_COUNT) * ADC_V_BAT_RATIO)
+/** @brief 电容电压 ADC 理论量程上限，单位 V；由分压比和 ADC 满量程推导。 */
+#define ADC_V_CAP_MAX_V ((ADC_FULL_SCALE_COUNT - ADC_V_CAP_OFFSET_COUNT) * ADC_V_CAP_RATIO)
+/** @brief 电池电流 ADC 理论量程下限，单位 A；由零点、采样电阻和放大倍数推导。 */
+#define ADC_I_BAT_MIN_A (-ADC_I_BAT_OFFSET_COUNT * ADC_I_BAT_RATIO)
+/** @brief 电池电流 ADC 理论量程上限，单位 A；由零点、采样电阻和放大倍数推导。 */
+#define ADC_I_BAT_MAX_A ((ADC_FULL_SCALE_COUNT - ADC_I_BAT_OFFSET_COUNT) * ADC_I_BAT_RATIO)
+/** @brief 底盘电流 ADC 理论量程下限，单位 A；由零点、采样电阻和放大倍数推导。 */
+#define ADC_I_CHASSIS_MIN_A (-ADC_I_CHASSIS_OFFSET_COUNT * ADC_I_CHASSIS_RATIO)
+/** @brief 底盘电流 ADC 理论量程上限，单位 A；由零点、采样电阻和放大倍数推导。 */
+#define ADC_I_CHASSIS_MAX_A \
+    ((ADC_FULL_SCALE_COUNT - ADC_I_CHASSIS_OFFSET_COUNT) * ADC_I_CHASSIS_RATIO)
 
 
 /** @brief 所有通道均拟合有效的掩码，仅用于校准状态，不代表采样新鲜度。 */
@@ -132,9 +147,8 @@ extern AdcCalibrationState_t g_adc_calibration_state;
  * @return 本次拟合状态；uid 暂为全零，由 UID.c 填入实际 UID 并发布。
  * @pre 仅在启动主线程、功率输出关闭且消费者尚未运行时调用。
  * @note 不读取硬件 UID，不直接修改全局状态；有效通道缓存拟合系数，其他通道
- *       保留理论值供观察。输入与校准区间拟合极值直接复用 power_ctrl_config.h
- *       中的峰值，底盘和电容共用 31 V，两路电流沿用电容电流上限。
- *       电池实测电压只要求非负有限，不设置物理上限；原始计数、正增益及可表示性检查保留。
+ *       保留理论值供观察。输入与校准区间拟合极值按 ADC 满量程、分压比、采样电阻、
+ *       放大倍数和零点推导，不复用运行保护或控制目标上限。原始计数、正增益及可表示性检查保留。
  *       校准区间以外仅检查换算的 float 可表示性，不保证实板精度或允许误差。
  */
 AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id);

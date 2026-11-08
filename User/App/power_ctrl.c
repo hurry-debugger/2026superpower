@@ -34,7 +34,7 @@ void PowerCtrl_Init(void)
 
     /**
      * @brief 每次调用的离散 PID 系数，0 为待调试模板，不沿用旧板系数。
-     * @details Kp 单位依次为 W/J、A/W、A/V、1/A；Ki 和 Kd 按原库逐次
+     * @details Kp 单位依次为 W/J、A/W、1/V、1/A；Ki 和 Kd 按原库逐次
      *          积分/差分，不自动乘除 dt。所有环每个控制周期计算一次。
      */
     /* 参照 Taurus Arm_PID_Init 的逐环调用格式；先清零再执行原库初始化。 */
@@ -44,15 +44,18 @@ void PowerCtrl_Init(void)
     PID_Init(&g_power_ctrl.power_pid, POWER_CTRL_CAP_CURRENT_MAX_A,
              POWER_CTRL_CAP_CURRENT_MAX_A, 0.0f,
              0.0f, 0.0f, 0.0f,
-             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit | PID_EXTERNAL_ANTI_WINDUP);
-    PID_Init(&g_power_ctrl.voltage_pid, POWER_CTRL_CAP_CURRENT_MAX_A,
-             POWER_CTRL_CAP_CURRENT_MAX_A, 0.0f,
+             0.0f, 0.0f, 0.0f, 0.0f,
+             Integral_Limit | PID_EXTERNAL_ANTI_WINDUP | PID_OUTPUT_TRACKING);
+    PID_Init(&g_power_ctrl.voltage_pid, BSP_HRTIM_GENERALIZED_DUTY_MAX,
+             BSP_HRTIM_GENERALIZED_DUTY_MAX, 0.0f,
              0.0f, 0.0f, 0.0f,
-             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit);
+             0.0f, 0.0f, 0.0f, 0.0f,
+             Integral_Limit | PID_EXTERNAL_ANTI_WINDUP | PID_OUTPUT_TRACKING);
     PID_Init(&g_power_ctrl.current_pid, BSP_HRTIM_GENERALIZED_DUTY_MAX,
              BSP_HRTIM_GENERALIZED_DUTY_MAX, 0.0f,
              0.0f, 0.0f, 0.0f,
-             0.0f, 0.0f, 0.0f, 0.0f, Integral_Limit | PID_EXTERNAL_ANTI_WINDUP);
+             0.0f, 0.0f, 0.0f, 0.0f,
+             Integral_Limit | PID_EXTERNAL_ANTI_WINDUP | PID_OUTPUT_TRACKING);
 }
 
 void PowerCtrl_Task(void)
@@ -134,34 +137,52 @@ void PowerCtrl_UpdateErrors(void)
 /* ==================== 状态切换 ==================== */
 
 /**
- * @brief 下电或故障时保护；满足全部条件后累计恢复周期并单次开启。
- * @pre 普通错误由 Master 发布；短路已在本次 ADC 控制入口检查。
- * @note 计数仅在 PROTECT 中递增；保护期间持续预置平衡点，CTRL 不重复复位或开启。
+ * @brief 先处理底盘过流和前馈可用性，再决定保护或连续正常恢复。
+ * @pre 普通错误由 Master 发布；仅 ADC 上下文调用。
+ * @note 高速电压判断只改变状态和恢复计数，普通电压错误位仍由 1 kHz 归因。
+ *       无效电压不进行除法、不覆盖上次占空比；原始前馈低于调制下限也禁止开启。
  */
 static void PowerCtrl_ModeSwitch(void)
 {
-    /* 用户指定仅以底盘电流判短路/过流，本周期保护分支直接关断。 */
+    /* 过流仍先于前馈计算，命中本周期关断并锁存至 MCU 复位。 */
     if(fabsf(g_bsp_adc_feedback.adc_convert[I_CHASSIS]) > POWER_CTRL_CHASSIS_CURRENT_MAX_A)
     {
         g_power_ctrl.errors.bits.short_circuit = 1U;
         g_power_ctrl.state = PROTECT_MODE;
     }
 
-    if(g_power_ctrl.errors.all != 0U)
+    if(!(g_bsp_adc_feedback.adc_convert[V_CHASSIS] >= POWER_CTRL_INPUT_MIN_V
+         && g_bsp_adc_feedback.adc_convert[V_CHASSIS] <= POWER_CTRL_OVERVOLTAGE_V
+         && g_bsp_adc_feedback.adc_convert[V_CAP] > 0.0f
+         && g_bsp_adc_feedback.adc_convert[V_CAP] <= POWER_CTRL_OVERVOLTAGE_V))
     {
-        g_power_ctrl.errclearcnt = 0U;
+        /* 直接保护，不以零前馈充当错误标志；NaN/无穷同样不满足有效区间。 */
         g_power_ctrl.state = PROTECT_MODE;
+        g_power_ctrl.errclearcnt = 0U;
     }
-    else if(g_power_ctrl.state == PROTECT_MODE)
+    else
     {
-        g_power_ctrl.errclearcnt++;
-        if(g_power_ctrl.errclearcnt > POWER_CTRL_RESTART_DELAY_CYCLES)
+        g_power_ctrl.generalized_duty = g_bsp_adc_feedback.adc_convert[V_CAP]
+            / g_bsp_adc_feedback.adc_convert[V_CHASSIS];
+
+        if(g_power_ctrl.errors.all != 0U
+           || g_power_ctrl.generalized_duty < BSP_HRTIM_GENERALIZED_DUTY_MIN)
         {
+            /* 比值可达性与普通电压错误分开，不新增错误位或预充状态机。 */
+            g_power_ctrl.state = PROTECT_MODE;
             g_power_ctrl.errclearcnt = 0U;
-            /* 保护期间已持续装载平衡点；复位保留本周期前馈，随后立即执行控制。 */
-            PowerCtrl_ResetLoops();
-            g_power_ctrl.state = CTRL_MODE;
-            BspHrtim_EnableOutput();
+        }
+        else if(g_power_ctrl.state == PROTECT_MODE)
+        {
+            g_power_ctrl.errclearcnt++;
+            if(g_power_ctrl.errclearcnt > POWER_CTRL_RESTART_DELAY_CYCLES)
+            {
+                g_power_ctrl.errclearcnt = 0U;
+                /* 保护期间已持续预置；本周期先确认有效前馈，复位后单次开启。 */
+                PowerCtrl_ResetLoops();
+                g_power_ctrl.state = CTRL_MODE;
+                BspHrtim_EnableOutput();
+            }
         }
     }
 }
@@ -169,25 +190,12 @@ static void PowerCtrl_ModeSwitch(void)
 /* ==================== 占空比计算与输出 ==================== */
 
 /**
- * @brief 保护期间持续预置前馈，恢复后执行闭环控制。
- * @pre 已完成错误检查；仅由固定周期 Task 串行调用，计数器及预装载持续运行。
+ * @brief 按已确定的状态关闭输出并预置，或执行闭环并更新调制。
+ * @pre ModeSwitch 已处理本周期过流及前馈可用性；仅 ADC 上下文串行调用。
+ * @note 前馈无效时保持旧比较记录但输出关闭，不通过底层最小限幅强行启动。
  */
 static void PowerCtrl_DutyCalcu(void)
 {
-    if(g_bsp_adc_feedback.adc_convert[V_CHASSIS] >= POWER_CTRL_INPUT_MIN_V
-       && g_bsp_adc_feedback.adc_convert[V_CHASSIS] <= POWER_CTRL_OVERVOLTAGE_V
-       && g_bsp_adc_feedback.adc_convert[V_CAP] > 0.0f
-       && g_bsp_adc_feedback.adc_convert[V_CAP] <= POWER_CTRL_OVERVOLTAGE_V)
-    {
-        g_power_ctrl.generalized_duty = g_bsp_adc_feedback.adc_convert[V_CAP]
-            / g_bsp_adc_feedback.adc_convert[V_CHASSIS];
-    }
-    else
-    {
-        /* 输入电压不可用时记录零前馈；底层统一限幅，输出保护由错误位决定。 */
-        g_power_ctrl.state = PROTECT_MODE;
-    }
-
     // clang-format off
     switch(g_power_ctrl.state)
     {
@@ -214,55 +222,83 @@ static void PowerCtrl_DutyCalcu(void)
 }
 
 /**
- * @brief 正常控制的能量、功率、电压竞争和电流串级计算，不操作硬件输出。
- * @details 能量环、电压环只做普通 PID 计算与输出限幅。
- *          先得到电压环允许的正向电流，再由 PID 库约束功率环和电流环。
- *          电流环 Output 为广义占空比修正，叠加 Vcap/Vchassis 前馈后限幅。
- * @pre 反馈由 ADC 本周期更新，普通电压错误由 1 kHz 发布；generalized_duty 为本周期前馈。
+ * @brief 计算低压不对称目标限流、能量/功率环及电流与电压的占空比竞争。
+ * @details 低于 5 V 充电上限 4 A、禁止主动放电；5～12 V 分别连续过渡到 13 A。
+ *          B 端参考限值乘 Vcap/Vchassis 得到 A 端目标上下界，不引入效率参数。
+ *          两个内环均输出相同前馈上的修正量，比较修正量等价于比较占空比。
+ * @pre 前馈有效且不低于调制下限；generalized_duty 尚为本周期原始前馈。
+ * @note 13 A 仅约束目标；电压环覆盖可改变实际电流，不能保证 B 端平均或峰值电流。
+ *       OutputFilter 均关闭；先判断控制权和外环积分，再跟踪输家，最后覆盖前馈。
  */
 static void PowerCtrl_CascadePidCalcu(void)
 {
-    g_power_ctrl.current_limit_a = POWER_CTRL_CAP_CURRENT_MAX_A * g_power_ctrl.generalized_duty;
+    /* 两个成员先作 B 端安培工作值，再原位换算为 A 端边界，避免另存同义副本。 */
+    if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_LOW_VOLTAGE_V)
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A;
+        g_power_ctrl.current_lower_limit_a = 0.0f;
+    }
+    else if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_NORMAL_VOLTAGE_V)
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A
+            + (POWER_CTRL_CAP_CURRENT_MAX_A - POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A)
+                * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
+                / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
+        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A
+            * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
+            / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
+    }
+    else
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_CURRENT_MAX_A;
+        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A;
+    }
+    g_power_ctrl.current_upper_limit_a *= g_power_ctrl.generalized_duty;
+    g_power_ctrl.current_lower_limit_a *= g_power_ctrl.generalized_duty;
     g_power_ctrl.power_feedback_w = g_bsp_adc_feedback.adc_convert[V_CHASSIS]
         * g_bsp_adc_feedback.adc_convert[I_CHASSIS];
 
     PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
                   POWER_CTRL_ENERGY_TARGET_J);
-
     g_power_ctrl.power_target_w = g_power_ctrl.energy_pid.Output;
 
-    if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V)
-    {
-        g_power_ctrl.voltage_pid.MaxOut = g_power_ctrl.current_limit_a;
-        g_power_ctrl.voltage_pid.IntegralLimit = g_power_ctrl.current_limit_a;
-        PID_Calculate(&g_power_ctrl.voltage_pid,
-            g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
-        OUTPUT_LIMIT(g_power_ctrl.voltage_pid.Output, g_power_ctrl.current_limit_a, 0.0f);
-        if(g_bsp_adc_feedback.adc_convert[V_CAP] >= POWER_CTRL_CAP_TARGET_V
-           && g_power_ctrl.voltage_pid.Output >= 0.0f
-           && g_power_ctrl.voltage_pid.Output <= g_power_ctrl.current_limit_a)
-            g_power_ctrl.voltage_pid.Output = 0.0f;
-    }
-    else
-    {
-        g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
-        g_power_ctrl.voltage_pid.Output = g_power_ctrl.current_limit_a;
-    }
-
-    /* 电流环饱和后仍需读取功率环计算前积分，不能用已更新的 Iout 替代此快照。 */
+    /* 后续还要按控制权撤销同向积分，快照不能被本次 PID 状态覆盖。
+     * 当前曲线正上界始终不小于负下界绝对值，故用正上界设置对称库内部限幅。
+     * 旧积分先按新范围限制快照，防止撤销本次积分时恢复范围外的旧积分。 */
     float power_iout_before = g_power_ctrl.power_pid.Iout;
-    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_limit_a;
-    g_power_ctrl.power_pid.IntegralLimit = g_power_ctrl.current_limit_a;
+    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_upper_limit_a;
+    g_power_ctrl.power_pid.IntegralLimit = g_power_ctrl.current_upper_limit_a;
+    OUTPUT_LIMIT(power_iout_before, g_power_ctrl.power_pid.IntegralLimit,
+                 -g_power_ctrl.power_pid.IntegralLimit);
+    /* 零误差死区只保留积分，须在计算前同步新范围，避免旧积分绕过动态限幅。 */
+    g_power_ctrl.power_pid.Iout = power_iout_before;
     PID_CalculateConstrained(&g_power_ctrl.power_pid,
         g_power_ctrl.power_feedback_w, g_power_ctrl.power_target_w,
-        -g_power_ctrl.current_limit_a, g_power_ctrl.voltage_pid.Output);
+        g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
 
     PID_CalculateConstrained(&g_power_ctrl.current_pid,
         g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
         BSP_HRTIM_GENERALIZED_DUTY_MIN - g_power_ctrl.generalized_duty,
         BSP_HRTIM_GENERALIZED_DUTY_MAX - g_power_ctrl.generalized_duty);
+    /* 未参与竞争时也先更新当前 P/D 和误差历史，再跟踪实际输出。 */
+    PID_CalculateConstrained(&g_power_ctrl.voltage_pid,
+        g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V,
+        BSP_HRTIM_GENERALIZED_DUTY_MIN - g_power_ctrl.generalized_duty,
+        BSP_HRTIM_GENERALIZED_DUTY_MAX - g_power_ctrl.generalized_duty);
 
-    /* 内环已到占空比边界时，功率环停止积累同向请求。 */
+    if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
+       && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output)
+    {
+        if(g_power_ctrl.power_pid.Iout > power_iout_before)
+            g_power_ctrl.power_pid.Iout = power_iout_before;
+        PID_TrackOutput(&g_power_ctrl.current_pid, g_power_ctrl.voltage_pid.Output);
+    }
+    else
+    {
+        PID_TrackOutput(&g_power_ctrl.voltage_pid, g_power_ctrl.current_pid.Output);
+    }
+
+    /* 电流 Output 此时记录实际采用的修正，内环全局饱和时撤销功率环同向积分。 */
     if((g_power_ctrl.current_pid.Output >= BSP_HRTIM_GENERALIZED_DUTY_MAX
             - g_power_ctrl.generalized_duty
         && g_power_ctrl.power_pid.Iout > power_iout_before)
@@ -270,7 +306,7 @@ static void PowerCtrl_CascadePidCalcu(void)
             - g_power_ctrl.generalized_duty
            && g_power_ctrl.power_pid.Iout < power_iout_before))
         g_power_ctrl.power_pid.Iout = power_iout_before;
-        
+
     g_power_ctrl.generalized_duty += g_power_ctrl.current_pid.Output;
     OUTPUT_LIMIT(g_power_ctrl.generalized_duty,
                  BSP_HRTIM_GENERALIZED_DUTY_MAX, BSP_HRTIM_GENERALIZED_DUTY_MIN);
@@ -285,6 +321,7 @@ static void PowerCtrl_ResetLoops(void)
     g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
     g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
     g_power_ctrl.power_target_w = 0.0f;
-    g_power_ctrl.current_limit_a = 0.0f;
+    g_power_ctrl.current_upper_limit_a = 0.0f;
+    g_power_ctrl.current_lower_limit_a = 0.0f;
     /* generalized_duty 是本周期已检查的前馈，进入 CTRL 时仍需叠加 PID 修正。 */
 }

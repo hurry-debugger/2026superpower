@@ -7,8 +7,6 @@
 
 #include "adccalibration.h"
 
-#include "power_ctrl_config.h"
-
 #include <float.h>
 #include <math.h>
 
@@ -24,14 +22,24 @@ static AdcCalibrationCoeff_t s_coefficients[ADC_CHANNEL_COUNT] =
     [V_CAP] = {ADC_V_CAP_RATIO, -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO}
 };
 
-/** @brief 校准实测值边界 V/A；电池仅以 FLT_MAX 检查可表示性，无物理上限。 */
-static const float s_value_limits[ADC_CHANNEL_COUNT] =
+/** @brief 校准实测值理论下限 V/A，由 ADC 模拟链参数推导。 */
+static const float s_value_minimums[ADC_CHANNEL_COUNT] =
 {
-    [V_CHASSIS] = POWER_CTRL_OVERVOLTAGE_V,
-    [V_BAT] = FLT_MAX,
-    [I_BAT] = POWER_CTRL_CAP_CURRENT_MAX_A,
-    [I_CHASSIS] = POWER_CTRL_CAP_CURRENT_MAX_A,
-    [V_CAP] = POWER_CTRL_OVERVOLTAGE_V
+    [V_CHASSIS] = 0.0f,
+    [V_BAT] = 0.0f,
+    [I_BAT] = ADC_I_BAT_MIN_A,
+    [I_CHASSIS] = ADC_I_CHASSIS_MIN_A,
+    [V_CAP] = 0.0f
+};
+
+/** @brief 校准实测值理论上限 V/A，由 ADC 模拟链参数推导。 */
+static const float s_value_maximums[ADC_CHANNEL_COUNT] =
+{
+    [V_CHASSIS] = ADC_V_CHASSIS_MAX_V,
+    [V_BAT] = ADC_V_BAT_MAX_V,
+    [I_BAT] = ADC_I_BAT_MAX_A,
+    [I_CHASSIS] = ADC_I_CHASSIS_MAX_A,
+    [V_CAP] = ADC_V_CAP_MAX_V
 };
 
 /* ==================== 私有接口声明 ==================== */
@@ -133,8 +141,8 @@ static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
     AdcCalibrationChannelError_t errors = {0};
     const float *raw = record->calibration_data[ADC_CAL_RAW_ROW(channel)];
     const float *real = record->calibration_data[ADC_CAL_REAL_ROW(channel)];
-    const float min_value = (channel == I_BAT || channel == I_CHASSIS)
-                                ? -s_value_limits[channel] : 0.0f;
+    const float min_value = s_value_minimums[channel];
+    const float max_value = s_value_maximums[channel];
     float raw_min = (float)ADC_FULL_SCALE_COUNT;
     float raw_max = 0.0f;
     double raw_sum = 0.0;
@@ -147,7 +155,7 @@ static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
         {
             errors.count_range = 1U;
         }
-        else if(!(real[point] >= min_value && real[point] <= s_value_limits[channel]))
+        else if(!(real[point] >= min_value && real[point] <= max_value))
         {
             errors.value_range = 1U;
         }
@@ -195,8 +203,7 @@ static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
             double bias = real_mean - gain * raw_mean;
 
             /*
-             * 底盘/电容电压及电流的物理边界只约束校准区间，不约束量程外推。
-             * 电池不设置物理上限，只要求区间端点仍可由 float 表示。
+             * 校准区间边界由 ADC 模拟链理论量程约束，不复用运行保护或控制目标上限。
              * 全 ADC 量程仅检查 float 可表示性，避免窄区间产生的异常斜率溢出。
              * 结果集中在此校验，通过后才窄化并更新缓存系数。
              */
@@ -215,8 +222,7 @@ static AdcCalibrationChannelError_t AdcCalibration_FitChannel(
                 /* 同时拒绝窄化后下溢为零的增益。 */
                 errors.gain_nonpositive = 1U;
             }
-            else if(!(fabs(fitted_min) <= (double)s_value_limits[channel]
-                      && fabs(fitted_max) <= (double)s_value_limits[channel]))
+            else if(!(fitted_min >= (double)min_value && fitted_max <= (double)max_value))
             {
                 errors.value_range = 1U;
             }

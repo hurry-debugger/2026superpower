@@ -1,11 +1,11 @@
 /**
  * @file pid.c
  * @brief Taurus-arm PID 库的本工程副本，提供可选的外部限幅抗积分饱和。
- * @details 来源 Hongxi Wong V1.0.6；基础算法保留，新增受 Improve 控制的限幅计算入口。
- *          复位仅清运行状态并保留参数。
+ * @details 来源 Hongxi Wong V1.0.6；外部限幅抗饱和和位置式输出跟踪均由 Improve 显式启用。
+ *          未启用跟踪的实例保留原算法；复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
- *       原位置式死区分支输出 0（死区为 0 时误差恰为 0 亦如此），增量式
- *       Ki 为 0 时输出清零。本轮保留这些行为；应用层禁用电机堵转检测。
+ *       跟踪模式在死区内保留积分输出，P/D/本次积分增量清零，并保留真实求和比例项。
+ *       未启用时死区输出仍为 0；增量式 Ki 为 0 时输出清零。应用层禁用电机堵转检测。
  */
 #include "pid.h"
 
@@ -94,60 +94,69 @@ static void f_PID_reset(PID_TypeDef *pid)
 float PID_Calculate(PID_TypeDef *pid, float measure, float target)
 {
     if(pid->Improve & ErrorHandle)
-    {
         f_PID_ErrorHandle(pid);
-        if(pid->ERRORHandler.ERRORType != PID_ERROR_NONE)
-        {
-            pid->Output = 0;
-            return 0;
-        }
-    }
 
-    pid->Measure = measure;
-    pid->Target = target;
-    pid->Err = pid->Target - pid->Measure;
-
-    if(ABS(pid->Err) > pid->DeadBand)
+    if((pid->Improve & ErrorHandle) && pid->ERRORHandler.ERRORType != PID_ERROR_NONE)
     {
-        pid->Pout = pid->Kp * pid->Err;
-        pid->ITerm = pid->Ki * pid->Err;
-        pid->Dout = pid->Kd * (pid->Err - pid->Last_Err);
-
-        if(pid->Improve & Trapezoid_Intergral)
-            f_Trapezoid_Intergral(pid);
-
-        if(pid->Improve & ChangingIntegralRate)
-            f_Changing_Integral_Rate(pid);
-
-        if(pid->Improve & Integral_Limit)
-            f_Integral_Limit(pid);
-
-        if(pid->Improve & Derivative_On_Measurement)
-            f_Derivative_On_Measurement(pid);
-
-        if(pid->Improve & DerivativeFilter)
-            f_Derivative_Filter(pid);
-
-        pid->Iout += pid->ITerm;
-
-        pid->Output = pid->Pout + pid->Iout + pid->Dout;
-
-        if(pid->Improve & OutputFilter)
-            f_Output_Filter(pid);
-
-        f_Output_Limit(pid);
-
-        f_Proportion_Limit(pid);
+        pid->Output = 0.0f;
     }
     else
     {
-        pid->Output = 0;
-    }
+        pid->Measure = measure;
+        pid->Target = target;
+        pid->Err = pid->Target - pid->Measure;
 
-    pid->Last_Measure = pid->Measure;
-    pid->Last_Output = pid->Output;
-    pid->Last_Dout = pid->Dout;
-    pid->Last_Err = pid->Err;
+        if(ABS(pid->Err) > pid->DeadBand)
+        {
+            pid->Pout = pid->Kp * pid->Err;
+            pid->ITerm = pid->Ki * pid->Err;
+            pid->Dout = pid->Kd * (pid->Err - pid->Last_Err);
+
+            if(pid->Improve & Trapezoid_Intergral)
+                f_Trapezoid_Intergral(pid);
+
+            if(pid->Improve & ChangingIntegralRate)
+                f_Changing_Integral_Rate(pid);
+
+            if(pid->Improve & Integral_Limit)
+                f_Integral_Limit(pid);
+
+            if(pid->Improve & Derivative_On_Measurement)
+                f_Derivative_On_Measurement(pid);
+
+            if(pid->Improve & DerivativeFilter)
+                f_Derivative_Filter(pid);
+
+            pid->Iout += pid->ITerm;
+            pid->Output = pid->Pout + pid->Iout + pid->Dout;
+
+            if(pid->Improve & OutputFilter)
+                f_Output_Filter(pid);
+
+            f_Output_Limit(pid);
+
+            /* 跟踪回算需要真实参与求和的 Pout，不能在输出合成后只改写比例项。 */
+            if(!(pid->Improve & PID_OUTPUT_TRACKING))
+                f_Proportion_Limit(pid);
+        }
+        else if(pid->Improve & PID_OUTPUT_TRACKING)
+        {
+            pid->Pout = 0.0f;
+            pid->Dout = 0.0f;
+            pid->ITerm = 0.0f;
+            pid->Output = pid->Iout;
+            f_Output_Limit(pid);
+        }
+        else
+        {
+            pid->Output = 0.0f;
+        }
+
+        pid->Last_Measure = pid->Measure;
+        pid->Last_Output = pid->Output;
+        pid->Last_Dout = pid->Dout;
+        pid->Last_Err = pid->Err;
+    }
 
     return pid->Output;
 }
@@ -180,11 +189,38 @@ float PID_CalculateConstrained(PID_TypeDef *pid, float measure, float target,
     }
 
     if(pid->Output < lower)
-        pid->Output = lower;
+    {
+        if(pid->Improve & PID_OUTPUT_TRACKING)
+            PID_TrackOutput(pid, lower);
+        else
+            pid->Output = lower;
+    }
     else if(pid->Output > upper)
-        pid->Output = upper;
+    {
+        if(pid->Improve & PID_OUTPUT_TRACKING)
+            PID_TrackOutput(pid, upper);
+        else
+            pid->Output = upper;
+    }
 
     return pid->Output;
+}
+
+/**
+ * @brief 按真实 P/D 贡献回算积分，不重复更新同次采样的误差或微分历史。
+ * @note 积分范围不足时保留饱和事实；Output 仍记录外部实际采用值，不冒充完全无扰。
+ */
+void PID_TrackOutput(PID_TypeDef *pid, float applied_output)
+{
+    pid->Iout = applied_output - pid->Pout - pid->Dout;
+    if(pid->Iout > pid->IntegralLimit)
+        pid->Iout = pid->IntegralLimit;
+    else if(pid->Iout < -pid->IntegralLimit)
+        pid->Iout = -pid->IntegralLimit;
+
+    pid->ITerm = 0.0f;
+    pid->Output = applied_output;
+    pid->Last_Output = applied_output;
 }
 
 float PID_Calculate_Increase(PID_TypeDef *pid, float measure, float target)

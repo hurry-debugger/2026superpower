@@ -30,7 +30,7 @@
 #include "UID.h"
 #include "adccalibration.h"
 #include "power_ctrl_task.h"
-
+#include "EventRecorder.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -104,6 +104,8 @@ int main(void)
   MX_USART1_UART_Init();
   MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
+	EventRecorderInitialize(EventRecordAll, 1U);
+	EventRecorderStart();
     /** @brief 启动先关断输出；运行期启停仅由 PowerCtrl 管理。 */
     if(HAL_HRTIM_WaveformOutputStop(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
     {
