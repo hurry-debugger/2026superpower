@@ -89,11 +89,6 @@ static void PowerCtrl_ModeSwitch(void)
     g_power_ctrl.A_power_fdb = g_bsp_adc_feedback.adc_convert[V_CHASSIS]
         * g_bsp_adc_feedback.adc_convert[I_CHASSIS];
 
-    /* A 端功率与底盘用电功率之和的综合反馈，单位 W；由入口 V_BAT*I_BAT 计算。
-     * 入口采样未包含 R18 前板载供电自耗，不等同于裁判实测功率。 */
-    g_power_ctrl.total_power_fbd = g_bsp_adc_feedback.adc_convert[V_BAT]
-        * g_bsp_adc_feedback.adc_convert[I_BAT];
-
     if(g_power_ctrl.errors.all != 0U
     || !(g_power_ctrl.generalized_duty > BSP_HRTIM_GENERALIZED_DUTY_MIN&&g_power_ctrl.generalized_duty < BSP_HRTIM_GENERALIZED_DUTY_MAX))
     {
@@ -168,6 +163,12 @@ static void PowerCtrl_CascadePidCalcu(void)
      * NONE 不限制积分；零误差时库输出 0，但不清除 Iout。 */
     PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
                   POWER_CTRL_ENERGY_TARGET_J);
+
+     /* A 端功率与底盘用电功率之和的综合反馈，单位 W；由入口 V_BAT*I_BAT 计算。
+     * 入口采样未包含 R18 前板载供电自耗，不等同于裁判实测功率。 */
+    g_power_ctrl.total_power_fbd = g_bsp_adc_feedback.adc_convert[V_BAT]
+        * g_bsp_adc_feedback.adc_convert[I_BAT];
+        
     /* P_A,target = P_lim - P_in + P_A - u_E；加回 P_A 是移除已计入入口的超电支路，
      * 再计算允许的 A 端功率。以同一 P_A 为反馈，误差化简为 P_lim - P_in - u_E。
      * P_in 来自 V_BAT*I_BAT，不包含 R18 前板载供电自耗，计量偏差仍待实测。 */

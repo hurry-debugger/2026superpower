@@ -13,7 +13,6 @@ BspAdcFeedback_t g_bsp_adc_feedback;
 
 void BspAdcFeedback_Init(void)
 {
-    memset(&g_bsp_adc_feedback, 0, sizeof(g_bsp_adc_feedback));
     /* 地址转换仅满足 HAL 的 DMA 接口，CPU 平均仍通过 volatile 读取。 */
     if(HAL_ADC_Start_DMA(&hadc1, (uint32_t *)s_adc1_dma,
                          BSP_ADC_FEEDBACK_ADC1_DMA_COUNT) != HAL_OK

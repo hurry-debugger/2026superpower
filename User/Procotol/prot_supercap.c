@@ -24,7 +24,7 @@ static void SupercapCan_Send(uint32_t id, uint8_t *data);
 void SupercapCan_Init(void)
 {
     static const uint32_t ids[] = {SUPERCAP_CAN_RX_MODE_ID, 0xFFFU};
-    memset(&g_supercap_can, 0, sizeof(g_supercap_can));
+
     Fdcanx_Init(&hfdcan1, ids, SupercapCan_Receive);
 }
 

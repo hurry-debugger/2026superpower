@@ -26,16 +26,14 @@ void SuperPower_Init(void)
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
     HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
 
-    Bsp_DWT_Init();
     BoardInfo_Init();
 
-#if defined(POWER_CTRL_CLOSED_LOOP)
     /* UID 匹配已完成；只在启动时由掩码生成校准汇总，不重复扫描详细错误。 */
     g_power_ctrl.errors.bits.calibration =
         g_board_info.valid_channel_mask != ADC_CAL_ALL_CHANNELS_MASK;
-    /* 反馈尚为零，预置保护原因，避免首次慢速发布前进入恢复。 */
-    PowerCtrl_UpdateErrors();
-#endif
+    
+    Bsp_DWT_Init();
+
     /* 计数器尚未启动，先准备 ADC DMA 和通信，避免首个控制事件使用未初始化接口。 */
     BspAdcFeedback_Init();
     USER_UART_Init();
@@ -43,11 +41,7 @@ void SuperPower_Init(void)
     
     PowerCtrl_Init();
 
-    if(HAL_HRTIM_WaveformCountStart_IT(&hhrtim1, HRTIM_TIMERID_MASTER
-        | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B) != HAL_OK)
-    {
-        Error_Handler();
-    }
+    HAL_HRTIM_WaveformCountStart_IT(&hhrtim1, HRTIM_TIMERID_MASTER | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B);
 }
 
 /**
