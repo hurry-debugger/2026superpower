@@ -1,6 +1,6 @@
 /**
  * @file UID.h
- * @brief 芯片完整 UID 的读取、比较及启动校准匹配入口。
+ * @brief 芯片完整 UID 的读取与比较底层接口。
  * @note 文件名 UID 为用户指定例外；全部函数实现在 UID.c。
  */
 
@@ -22,17 +22,12 @@ typedef struct
 } UID_t;
 
 /**
- * @brief 本板完整 UID，便于在调试器中查看三个 32 位字。
- * @note 读取前为零；仅由启动主线程中的 UID_Read() 更新，其他模块只读。
+ * @brief 读取当前 MCU 的完整 UID，直接填写调用方提供的对象。
+ * @param[out] uid 接收 96 位 UID，按 HAL 的 w0、w1、w2 顺序写入三个字。
+ * @pre 指针非空，指向可写的 UID_t 对象。
+ * @note 在启动主线程调用；不保存额外副本，不执行外设配置或校准。
  */
-extern UID_t g_uid;
-
-/**
- * @brief 读取当前 MCU 的完整 UID。
- * @return 按 w0、w1、w2 顺序保存的 UID，可直接用于填写校准记录。
- * @note 在启动主线程中调用，同时更新 g_uid，不执行外设配置或校准。
- */
-UID_t UID_Read(void);
+void UID_Read(UID_t *uid);
 
 /**
  * @brief 比较两个完整 UID。
@@ -42,15 +37,6 @@ UID_t UID_Read(void);
  * @pre 两个指针均非空。
  */
 bool UID_Equals(const UID_t *a, const UID_t *b);
-
-/**
- * @brief 读取一次 UID、唯一匹配记录并初始化全局校准状态及换算系数。
- * @pre 仅在启动主线程中调用，功率输出关闭，换算消费者尚未运行。
- * @note 跳过全零 UID 槽位；未知或重复 UID 恢复理论换算，但禁止控制。
- *       g_adc_calibration_state 的唯一运行期更新者是本函数；发布后其他模块只读。
- *       该函数不启动或关闭 HRTIM，输出启动门槛由 main 检查。
- */
-void UID_MatchCalibration(void);
 
 #ifdef __cplusplus
 }

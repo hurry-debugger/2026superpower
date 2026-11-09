@@ -13,14 +13,14 @@
 User/
 ├── App/          # 应用状态、任务编排、保护策略与业务协作
 ├── Bsp/          # UID、HRTIM 与采样发布
-├── Calibration/  # 校准记录、拟合算法及理论换算
+├── Calibration/  # 板卡信息、校准记录、拟合算法及理论换算
 ├── Procotol/     # USART/CAN BSP、超电协议、裁判类型、CRC 与解析（沿用拼写）
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
 
 App、Config、Calibration、Procotol 已登记构建；校准记录 C/H 从 Bsp 移至 Calibration，
-内容与原有 AdcCalibration 接口不变。
+板卡信息由 boardinfo.c/.h 管理，ADC 算法与记录由 adc_calibration_record.c/.h 管理。
 C/H 在模块目录中配对存放，文件名小写下划线；UID.c/.h 为用户指定命名例外。
 新模块可以从 `templates/module_template.c/.h`
 提炼结构，但其中的状态接口仅供明确需要状态返回的场景；简单计算直接返回数值或使用 void。
@@ -30,16 +30,19 @@ Algorithm 不依赖 HAL；USART/CAN 的 HAL 封装位于 Procotol，Bsp 管理�
 
 ## 手填记录与启动校准
 
-只需在 `main` 的启动区域调用一次 `UID_MatchCalibration()`，无参数、无返回值。
-它在 `UID.c` 中读取完整 UID，唯一匹配记录，调用 `AdcCalibration_Init(id)` 并发布全局状态。
-`g_adc_calibration_state` 唯一定义在 UID.c，extern 与完整类型在 adccalibration.h 中声明，
-其他模块包含该头文件后只读；不能自行修改问题位或有效掩码来允许控制。
+启动调度中的 SuperPower_Init() 调用一次 BoardInfo_Init()，无参数、无返回值。
+boardinfo.c 定义唯一的 BoardInfo_t g_board_info，保存板卡 UID、ID、识别错误和 ADC 校准结果；
+UID_Read(&g_board_info.uid) 直接写入 UID，UID_Equals() 只负责完整 UID 比较。
+UID 层不依赖校准模块，不保存 g_uid，也不创建局部板卡信息副本。
+BoardInfo_Init() 唯一匹配记录后调用 AdcCalibration_FitChannel(id, channel)，直接写入全局通道错误并汇总有效掩码。
+adc_calibration_record.c/.h 保存记录、理论参数、系数缓存、拟合及换算接口，不依赖板卡模块。
+其他消费者只读 g_board_info，禁止手改错误位或有效掩码来允许控制。
 
 校准流程不需要脚本或 Excel：
 
 1. 查看全局状态的 `uid.word[0..2]`，按相同字序填写记录中的三个 uint32_t。
 2. 在 `adc_calibration_record.h` 增加枚举 ID，放在 `SUPERCAP_COUNT` 之前；
-   在对应 .c 数组使用 `[SUPERCAP_ID_XX]` 指定下标。01 标签对应下标 0。
+   在对应 .c 数组使用 `[SUPERCAP_ID_XX]` 指定下标。01 标签对应下标 1，0 号槽位保留为 UNKNOWN。
 3. 每路按 `ADC_CAL_RAW_ROW(通道)` 填平均 ADC 计数，允许小数；按
    `ADC_CAL_REAL_ROW(通道)` 填仪表实测 V/A，同列为一组。计数定义应与实际采集平均一致，
    不先用理论公式换成 V/A；电流保留正负号。
@@ -103,7 +106,7 @@ AdcCalibration_ConvertValue的第三参数单位为V/A，与旧计数零点接�
 
 ```c
 #include "filter.h"
-#include "adccalibration.h"
+#include "adc_calibration_record.h"
 #include <stdbool.h>
 
 /**

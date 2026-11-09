@@ -4,6 +4,8 @@
  */
 #include "power_ctrl_task.h"
 
+#include "boardinfo.h"
+
 #include "adc.h"
 #include "bsp_adc.h"
 #include "bsp_hrtim.h"
@@ -25,12 +27,12 @@ void SuperPower_Init(void)
     HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
 
     Bsp_DWT_Init();
-    UID_MatchCalibration();
+    BoardInfo_Init();
 
 #if defined(POWER_CTRL_CLOSED_LOOP)
     /* UID 匹配已完成；只在启动时由掩码生成校准汇总，不重复扫描详细错误。 */
     g_power_ctrl.errors.bits.calibration =
-        g_adc_calibration_state.valid_channel_mask != ADC_CAL_ALL_CHANNELS_MASK;
+        g_board_info.valid_channel_mask != ADC_CAL_ALL_CHANNELS_MASK;
     /* 反馈尚为零，预置保护原因，避免首次慢速发布前进入恢复。 */
     PowerCtrl_UpdateErrors();
 #endif

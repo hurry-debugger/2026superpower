@@ -881,8 +881,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>../User/Calibration/adccalibration.c</PathWithFileName>
-      <FilenameWithoutPath>adccalibration.c</FilenameWithoutPath>
+      <PathWithFileName>../User/Calibration/boardinfo.c</PathWithFileName>
+      <FilenameWithoutPath>boardinfo.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -893,8 +893,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>../User/Calibration/adccalibration.h</PathWithFileName>
-      <FilenameWithoutPath>adccalibration.h</FilenameWithoutPath>
+      <PathWithFileName>../User/Calibration/boardinfo.h</PathWithFileName>
+      <FilenameWithoutPath>boardinfo.h</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>

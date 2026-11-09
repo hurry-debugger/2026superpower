@@ -1277,14 +1277,14 @@
           <GroupName>Application/User/Calibration</GroupName>
           <Files>
             <File>
-              <FileName>adccalibration.c</FileName>
+              <FileName>boardinfo.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../User/Calibration/adccalibration.c</FilePath>
+              <FilePath>../User/Calibration/boardinfo.c</FilePath>
             </File>
             <File>
-              <FileName>adccalibration.h</FileName>
+              <FileName>boardinfo.h</FileName>
               <FileType>5</FileType>
-              <FilePath>../User/Calibration/adccalibration.h</FilePath>
+              <FilePath>../User/Calibration/boardinfo.h</FilePath>
             </File>
             <File>
               <FileName>adc_calibration_record.c</FileName>

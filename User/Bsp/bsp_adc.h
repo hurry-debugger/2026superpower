@@ -4,7 +4,7 @@
 #ifndef SUPERPOWER_BSP_ADC_H
 #define SUPERPOWER_BSP_ADC_H
 
-#include "adccalibration.h"
+#include "adc_calibration_record.h"
 
 /** @brief ADC1 四个 Rank；来源为当前 ADC1 扫描配置。 */
 #define BSP_ADC_FEEDBACK_ADC1_RANK_COUNT (4U)
