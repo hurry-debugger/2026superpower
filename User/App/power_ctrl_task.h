@@ -17,6 +17,6 @@
  *       开环每次 ADC1 回调都调用固定 PWM 开启，不处理采样、不响应远程保护。
  *       Master 在开环仍更新错误字，但无闭环状态机据此关断；须外部隔离驱动。
  */
-void PowerCtrlTask_Init(void);
+void SuperPower_Init(void);
 
 #endif /* SUPERPOWER_POWER_CTRL_TASK_H */

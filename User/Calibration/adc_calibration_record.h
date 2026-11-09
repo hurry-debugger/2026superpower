@@ -27,12 +27,12 @@ extern "C"
 #error ADC_CAL_POINT_COUNT_must_be_at_least_two
 #endif
 
-/** @brief 记录下标即超电 ID；01 是易读标签，枚举值 0 是数组下标。 */
+/** @brief 记录下标即超电 ID；0 为未识别保留槽位，有效板卡从 1 开始。 */
 typedef enum
 {
-    SUPERCAP_ID_UNKNOWN = -1, /**< 未识别，不得用于数组索引。 */
-    SUPERCAP_ID_01 = 0,       /**< 第一个记录槽位，当前 UID 和采集点待填写。 */
-    SUPERCAP_COUNT           /**< 记录槽位数；新增 ID 必须放在它之前。 */
+    SUPERCAP_ID_UNKNOWN = 0, /**< 未识别；对应保留槽位，不参与匹配或校准。 */
+    SUPERCAP_ID_01 = 1,      /**< 第一个有效记录槽位，当前 UID 和采集点待填写。 */
+    SUPERCAP_COUNT          /**< 数组槽位数，含 0 号保留槽位；新增 ID 放在它之前。 */
 } SupercapId_e;
 
 /** @brief adc_raw、adc_convert 和校准记录共用的五路通道索引。 */

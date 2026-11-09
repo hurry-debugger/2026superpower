@@ -195,7 +195,7 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 不与其他 HRTIM 公共寄存器或 HAL 句柄写入并发；运行期两次设置至少间隔一个完整 PWM 周期。
 临时禁止装载不是全局临界区，也不提供任意中断抢占关断的故障保护能力。
 
-运行顺序为：先关闭输出、完成 UID/拟合及 ADC 硬件校准，再 PowerCtrlTask_Init，
+运行顺序为：先关闭输出、完成 UID/拟合及 ADC 硬件校准，再 SuperPower_Init，
 其中 PowerCtrl_Init 调用 BspHrtim_Init，准备 DMA/通信后一次启动三计数器。
 闭环启动先设置校准汇总并检查零初始反馈；PROTECT 每周期关断并预置前馈，
 普通错误由1 kHz更新，ADC在错误字为零时累计连续正常控制周期，
@@ -403,7 +403,7 @@ Master在保存/恢复PRIMASK的短临界区复制电压、电流、错误和状
 Master底层计数250 kHz、周期4 μs，重复计数249，通过MREP产生1 kHz普通保护/CAN中断。
 Timer A/B的NVIC关闭；当前生成配置仍保留Timer B外设REP请求，不产生CPU业务回调，代理不改配置。
 NVIC：ADC1 DMA=0，ADC2 DMA和Master=1，USART/UART DMA/FDCAN=3，SysTick=15。
-周期、请求、预装载和优先级由CubeMX配置和静态审查保证，PowerCtrlTask_Init不重复核对。
+周期、请求、预装载和优先级由CubeMX配置和静态审查保证，SuperPower_Init不重复核对。
 UART固定为USART1/DMA1_Channel3普通接收，不在初始化中复查绑定和模式，UART模块为必选。
 CAN仅在BSP配置过滤器时保留容量边界检查。g_supercap_can记录底盘模式及发送忙/失败次数。
 采样、数值、500 ms恢复、CAN帧和最坏40 μs执行时间均待上板验证。

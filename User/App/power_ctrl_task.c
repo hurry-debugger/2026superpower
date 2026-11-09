@@ -17,7 +17,7 @@
  * @brief 先保持输出关闭并准备接收，再启动产生采样和保护事件的计数器。
  * @note 初始化不直接开启闭环输出；ADC 状态机满足保护及恢复条件后负责开启。
  */
-void PowerCtrlTask_Init(void)
+void SuperPower_Init(void)
 {
     BspHrtim_DisableOutput();
 

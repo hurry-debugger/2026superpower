@@ -100,7 +100,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
     /** @brief 准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */
-    PowerCtrlTask_Init();
+    SuperPower_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */

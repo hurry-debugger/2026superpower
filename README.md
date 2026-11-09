@@ -23,7 +23,7 @@
 ## 当前实现
 
 启动先关闭四路输出，完成 UID 唯一匹配、五路校准拟合及 ADC 硬件自校准。
-PowerCtrlTask_Init 初始化控制，闭环按全通道有效掩码生成一次 calibration 汇总，
+SuperPower_Init 初始化控制，闭环按全通道有效掩码生成一次 calibration 汇总，
 在反馈仍为零时预先检查普通错误，再准备 DMA、UART、CAN 并启动 Master/A/B。
 固定外设配置由 CubeMX 和静态审查保证，不在业务代码中重复检查。
 

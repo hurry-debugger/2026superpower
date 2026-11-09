@@ -12,10 +12,7 @@
 
 UID_t g_uid;
 
-AdcCalibrationState_t g_adc_calibration_state =
-{
-    .supercap_id = SUPERCAP_ID_UNKNOWN
-};
+AdcCalibrationState_t g_adc_calibration_state;
 
 /* ==================== 公共接口实现 ==================== */
 
@@ -41,7 +38,7 @@ void UID_MatchCalibration(void)
     SupercapId_e matched_id = SUPERCAP_ID_UNKNOWN;
     uint32_t match_count = 0U;
 
-    for(uint32_t id = 0U; id < SUPERCAP_COUNT; id++)
+    for(uint32_t id = SUPERCAP_ID_01; id < SUPERCAP_COUNT; id++)
     {
         const UID_t *record_uid = &g_adc_calibration_records[id].uid;
 
