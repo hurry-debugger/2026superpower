@@ -32,6 +32,7 @@ typedef enum
 {
     SUPERCAP_ID_UNKNOWN = 0, /**< 未识别；对应保留槽位，不参与匹配或校准。 */
     SUPERCAP_ID_01 = 1,      /**< 第一个有效记录槽位，当前 UID 和采集点待填写。 */
+    SUPERCAP_ID_02 = 2,     
     SUPERCAP_COUNT          /**< 数组槽位数，含 0 号保留槽位；新增 ID 放在它之前。 */
 } SupercapId_e;
 

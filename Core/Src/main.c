@@ -97,6 +97,7 @@ int main(void)
   MX_ADC2_Init();
   MX_USART1_UART_Init();
   MX_FDCAN1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
     /** @brief 准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */

@@ -36,9 +36,8 @@
 #define POWER_CTRL_OVERVOLTAGE_V (31.0f)
 /** @brief 底盘、电池共用输入下限 V；电池不设置物理电压上限。 */
 #define POWER_CTRL_INPUT_MIN_V (15.0f)
-/** @brief 用户指定的底盘过流关断阈值 A：450 W / 15 V，不附加低压条件。 */
-#define POWER_CTRL_CHASSIS_CURRENT_MAX_A \
-    (POWER_CTRL_POWER_MAX_W / POWER_CTRL_INPUT_MIN_V)
+/** @brief 用户指定的底盘过流关断阈值 A：450W / 20V */
+#define POWER_CTRL_CHASSIS_CURRENT_MAX_A (22.5f)
 
 /** @brief 港科 RM2024 底盘过压分档 V，实现按高到低判断，均为严格大于。 */
 #define POWER_CTRL_OVERVOLTAGE_LEVEL_1_V (27.0f)

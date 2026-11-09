@@ -13,7 +13,28 @@
 
 const AdcCalibrationRecord_t g_adc_calibration_records[SUPERCAP_COUNT] =
 {
+
     [SUPERCAP_ID_01] =
+    {
+        .uid =
+        {
+            .word = {0x00200046, 0x48525010, 0x20323733}
+        },
+        .calibration_data =
+        {
+            [ADC_CAL_RAW_ROW(V_CHASSIS)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_REAL_ROW(V_CHASSIS)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_RAW_ROW(V_BAT)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_REAL_ROW(V_BAT)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_RAW_ROW(I_BAT)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_REAL_ROW(I_BAT)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_RAW_ROW(I_CHASSIS)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_REAL_ROW(I_CHASSIS)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_RAW_ROW(V_CAP)] = {NAN, NAN, NAN, NAN, NAN},
+            [ADC_CAL_REAL_ROW(V_CAP)] = {NAN, NAN, NAN, NAN, NAN}
+        }
+    },
+    [SUPERCAP_ID_02] =
     {
         .uid =
         {
