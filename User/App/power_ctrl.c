@@ -20,6 +20,7 @@
 static void PowerCtrl_ModeSwitch(void);
 static void PowerCtrl_DutyCalcu(void);
 static void PowerCtrl_CascadePidCalcu(void);
+static void PowerCtrl_CalculateCurrentLimits(void);
 static void PowerCtrl_ResetLoops(void);
 
 PowerCtrl_t g_power_ctrl;
@@ -27,8 +28,6 @@ PowerCtrl_t g_power_ctrl;
 
 void PowerCtrl_Init(void)
 {
-    BspHrtim_Init();
-    memset(&g_power_ctrl, 0, sizeof(g_power_ctrl));
     g_power_ctrl.state = PROTECT_MODE;
 
     /**
@@ -87,12 +86,12 @@ static void PowerCtrl_ModeSwitch(void)
 
     g_power_ctrl.generalized_duty = g_bsp_adc_feedback.adc_convert[V_CAP]
         / g_bsp_adc_feedback.adc_convert[V_CHASSIS];
-    g_power_ctrl.power_feedback_w = g_bsp_adc_feedback.adc_convert[V_CHASSIS]
+    g_power_ctrl.A_power_fdb = g_bsp_adc_feedback.adc_convert[V_CHASSIS]
         * g_bsp_adc_feedback.adc_convert[I_CHASSIS];
 
-    /* 同一 ADC 上下文中先借目标成员保存入口功率，闭环再原位形成 A 端目标。
-    * 输入范围保证 |P_A| 不超过约 853 W、|P_in| 不超过约 999 W，无需重复检查乘积。 */
-    g_power_ctrl.power_target_w = g_bsp_adc_feedback.adc_convert[V_BAT]
+    /* A 端功率与底盘用电功率之和的综合反馈，单位 W；由入口 V_BAT*I_BAT 计算。
+     * 入口采样未包含 R18 前板载供电自耗，不等同于裁判实测功率。 */
+    g_power_ctrl.total_power_fbd = g_bsp_adc_feedback.adc_convert[V_BAT]
         * g_bsp_adc_feedback.adc_convert[I_BAT];
 
     if(g_power_ctrl.errors.all != 0U
@@ -156,38 +155,13 @@ static void PowerCtrl_DutyCalcu(void)
  *          B 端参考限值乘 Vcap/Vchassis 得到 A 端目标上下界，不引入效率参数。
  *          两个内环均输出相同前馈上的修正量，比较修正量等价于比较占空比。
  * @pre ModeSwitch 已确认前馈及功率有效；generalized_duty 为原始前馈，
- *      power_feedback_w 为 P_A，power_target_w 尚为同周期入口功率 P_in。
+ *      A_power_fdb 为 P_A，total_power_fbd 为同周期入口总功率 P_in。
  * @note 13 A 仅约束目标；电压环覆盖可改变实际电流，不能保证 B 端平均或峰值电流。
  *       四环均不启用可选优化；仅计算候选、选择修正量并执行目标及输出限幅。
  */
 static void PowerCtrl_CascadePidCalcu(void)
 {
-    /* 低压时限制从电容提取功率，仍允许较小充电目标；5～12 V 连续恢复双向能力。
-     * 两个成员先作 B 端安培工作值，再原位换算为 A 端边界，避免另存同义副本。 */
-    if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_LOW_VOLTAGE_V)
-    {
-        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A;
-        g_power_ctrl.current_lower_limit_a = 0.0f;
-    }
-    else if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_NORMAL_VOLTAGE_V)
-    {
-        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A
-            + (POWER_CTRL_CAP_CURRENT_MAX_A - POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A)
-                * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
-                / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
-        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A
-            * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
-            / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
-    }
-    else
-    {
-        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_CURRENT_MAX_A;
-        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A;
-    }
-    /* 理想功率平衡 V_A*I_A = V_B*I_B，故 A 端限值为 B 端参考乘 V_B/V_A。
-     * 这里不估算效率，也不把目标限幅等同于实际平均电流或峰值保护。 */
-    g_power_ctrl.current_upper_limit_a *= g_power_ctrl.generalized_duty;
-    g_power_ctrl.current_lower_limit_a *= g_power_ctrl.generalized_duty;
+    PowerCtrl_CalculateCurrentLimits();
 
     /* e_E = 45 J - E，输出 u_E 的单位为 W，每 40 us 按最新可读能量重复计算。
      * 正向增益下能量不足产生正修正，后续减去它以减少充电或增加补电。
@@ -198,28 +172,24 @@ static void PowerCtrl_CascadePidCalcu(void)
      * 再计算允许的 A 端功率。以同一 P_A 为反馈，误差化简为 P_lim - P_in - u_E。
      * P_in 来自 V_BAT*I_BAT，不包含 R18 前板载供电自耗，计量偏差仍待实测。 */
     g_power_ctrl.power_target_w = (float)robot_status.chassis_power_limit
-        - g_power_ctrl.power_target_w + g_power_ctrl.power_feedback_w
+        - g_power_ctrl.total_power_fbd + g_power_ctrl.A_power_fdb
         - g_power_ctrl.energy_pid.Output;
 
     /* 功率 PID 由 W 误差生成 A 端目标电流 A，再受低压不对称边界约束。
      * 正上界不小于负下界绝对值，用其设置库内对称输出范围；NONE 只限输出。 */
     g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_upper_limit_a;
     PID_CalculateConstrained(&g_power_ctrl.power_pid,
-        g_power_ctrl.power_feedback_w, g_power_ctrl.power_target_w,
+        g_power_ctrl.A_power_fdb, g_power_ctrl.power_target_w,
         g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
 
     /* 电流 PID 输出无量纲修正 u_I；给定 MIN-Dff、MAX-Dff，使 Dff+u_I 可调制。 */
-    PID_CalculateConstrained(&g_power_ctrl.current_pid,
-        g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
-        BSP_HRTIM_GENERALIZED_DUTY_MIN - g_power_ctrl.generalized_duty,
-        BSP_HRTIM_GENERALIZED_DUTY_MAX - g_power_ctrl.generalized_duty);
+    PID_Calculate(&g_power_ctrl.current_pid,
+        g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output);
     /* 电压 PI 同样输出无量纲修正 u_V，以 29 V 为目标，每周期计算。
      * 两候选均为 Dff+u，共用前馈，故直接比较 u_V、u_I 即可取较小占空比。
      * NONE 不冻结或跟踪未采用的环，其积分历史仍按基础算法推进。 */
-    PID_CalculateConstrained(&g_power_ctrl.voltage_pid,
-        g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V,
-        BSP_HRTIM_GENERALIZED_DUTY_MIN - g_power_ctrl.generalized_duty,
-        BSP_HRTIM_GENERALIZED_DUTY_MAX - g_power_ctrl.generalized_duty);
+    PID_Calculate(&g_power_ctrl.voltage_pid,
+        g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
 
     /* 严格高于 26.1 V 才允许电压环限制充电；其余周期完全采用电流候选。 */
     if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
@@ -304,6 +274,42 @@ void PowerCtrl_UpdateErrors(void)
 
 /* ==================== 私有辅助 ==================== */
 
+/**
+ * @brief 计算 A 端目标电流上下限，单位 A。
+ * @details 按电容电压分段计算 B 端充放电限值，再乘原始前馈换算至 A 端。
+ * @pre 仅 ADC 上下文串行调用；generalized_duty 为本周期原始 Vcap/Vchassis。
+ * @note 直接更新既有上下限成员；目标限幅不等同于实际电流或峰值保护。
+ */
+static void PowerCtrl_CalculateCurrentLimits(void)
+{
+    /* 低压时限制从电容提取功率，仍允许较小充电目标；5～12 V 连续恢复双向能力。
+     * 两个成员先作 B 端安培工作值，再原位换算为 A 端边界，避免另存同义副本。 */
+    if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_LOW_VOLTAGE_V)
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A;
+        g_power_ctrl.current_lower_limit_a = 0.0f;
+    }
+    else if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_NORMAL_VOLTAGE_V)
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A
+            + (POWER_CTRL_CAP_CURRENT_MAX_A - POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A)
+                * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
+                / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
+        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A
+            * (g_bsp_adc_feedback.adc_convert[V_CAP] - POWER_CTRL_CAP_LOW_VOLTAGE_V)
+            / (POWER_CTRL_CAP_NORMAL_VOLTAGE_V - POWER_CTRL_CAP_LOW_VOLTAGE_V);
+    }
+    else
+    {
+        g_power_ctrl.current_upper_limit_a = POWER_CTRL_CAP_CURRENT_MAX_A;
+        g_power_ctrl.current_lower_limit_a = -POWER_CTRL_CAP_CURRENT_MAX_A;
+    }
+    /* 理想功率平衡 V_A*I_A = V_B*I_B，故 A 端限值为 B 端参考乘 V_B/V_A。
+     * 这里不估算效率，也不把目标限幅等同于实际平均电流或峰值保护。 */
+    g_power_ctrl.current_upper_limit_a *= g_power_ctrl.generalized_duty;
+    g_power_ctrl.current_lower_limit_a *= g_power_ctrl.generalized_duty;
+}
+
 static void PowerCtrl_ResetLoops(void)
 {
     g_power_ctrl.energy_pid.PID_reset(&g_power_ctrl.energy_pid);
@@ -312,6 +318,6 @@ static void PowerCtrl_ResetLoops(void)
     g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
     g_power_ctrl.current_upper_limit_a = 0.0f;
     g_power_ctrl.current_lower_limit_a = 0.0f;
-    /* 保留 ModeSwitch 已检查的原始前馈、P_A 和暂存于目标成员的 P_in。
+    /* 保留 ModeSwitch 本周期计算的原始前馈、P_A 和 total_power_fbd 中的 P_in。
      * 本次进入 CTRL 后立即形成 A 端目标并叠加内环修正，不能在此清掉工作值。 */
 }

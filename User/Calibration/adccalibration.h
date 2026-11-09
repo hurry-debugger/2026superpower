@@ -104,8 +104,7 @@ typedef struct
 {
     uint32_t no_record : 1; /**< 未登记板卡：当前 MCU UID 没有匹配记录。 */
     uint32_t duplicate_uid : 1; /**< 重复登记：当前 MCU UID 对应多个记录，拒绝任选一条。 */
-    uint32_t invalid_id : 1; /**< 记录下标非法：初始化参数超出记录下标范围。 */
-    uint32_t reserved : 29; /**< 保留，保持为 0。 */
+    uint32_t reserved : 30; /**< 保留，保持为 0。 */
 } AdcCalibrationBoardError_t;
 
 /**

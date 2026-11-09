@@ -38,8 +38,8 @@ typedef union
 /**
  * @brief ADC 管理输出、状态和 PID，Master 只发布普通错误字。
  * @note volatile 标明共享访问，快照及错误字发布仍需短临界区保证一致性。
- *       有效输入时功率成员先保存同周期 P_A/P_in，CTRL 才形成 A 端目标；
- *       PROTECT 期间 power_target_w 不是有效控制目标，输入无效时记录也可能为旧值。
+ *       A_power_fdb 与 total_power_fbd 分别保存同周期 P_A 和 P_in，CTRL 更新 A 端目标；
+ *       power_target_w 只保存目标功率，PROTECT 期间保留初值或上次目标，不用于控制。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
  *       四环 Improve 均为 NONE，不执行可选积分限幅、抗饱和、滤波或输出跟踪。
  *       开环不调用控制入口，测量与控制记录保持初值；Master 仍可更新错误字。
@@ -50,8 +50,9 @@ typedef struct
     volatile PowerCtrlError_t errors; /**< 普通错误重算，校准汇总与短路锁存保留。 */
     volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；保护条件成立或进入 CTRL 时清零。 */
     uint32_t chassis_overvoltage_cnt; /**< 仅 1 kHz 更新的加权累计，范围 0～300。 */
-    float power_feedback_w; /**< A 端 V_CHASSIS*I_CHASSIS，单位 W；正充电、负放电。 */
-    float power_target_w; /**< 先存入口 V_BAT*I_BAT，再原位形成 P_lim-P_in+P_A-u_E，W。 */
+    float A_power_fdb; /**< A 端 V_CHASSIS*I_CHASSIS，单位 W；正充电、负放电。 */
+    float total_power_fbd; /**< A 端功率与底盘用电功率之和的综合反馈，单位 W；由 V_BAT*I_BAT 计算。 */
+    float power_target_w; /**< A 端目标功率 P_lim-P_in+P_A-u_E，单位 W；仅 CTRL 更新。 */
     float current_upper_limit_a; /**< A 端正向目标上界 A；B 端充电参考上限乘原始前馈。 */
     float current_lower_limit_a; /**< A 端负向目标下界 A；低于 5 V 为零，禁止主动请求放电。 */
     float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */

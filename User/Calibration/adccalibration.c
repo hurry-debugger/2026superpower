@@ -65,23 +65,6 @@ AdcCalibrationState_t AdcCalibration_Init(SupercapId_e supercap_id)
         .supercap_id = SUPERCAP_ID_UNKNOWN
     };
 
-    /* 每次初始化先恢复理论值，避免失败通道沿用上次校准系数。 */
-    s_coefficients[V_CHASSIS].gain = ADC_V_CHASSIS_RATIO;
-    s_coefficients[V_CHASSIS].bias =
-        -ADC_V_CHASSIS_OFFSET_COUNT * ADC_V_CHASSIS_RATIO;
-    s_coefficients[V_BAT].gain = ADC_V_BAT_RATIO;
-    s_coefficients[V_BAT].bias =
-        -ADC_V_BAT_OFFSET_COUNT * ADC_V_BAT_RATIO;
-    s_coefficients[I_BAT].gain = ADC_I_BAT_RATIO;
-    s_coefficients[I_BAT].bias =
-        -ADC_I_BAT_OFFSET_COUNT * ADC_I_BAT_RATIO;
-    s_coefficients[I_CHASSIS].gain = ADC_I_CHASSIS_RATIO;
-    s_coefficients[I_CHASSIS].bias =
-        -ADC_I_CHASSIS_OFFSET_COUNT * ADC_I_CHASSIS_RATIO;
-    s_coefficients[V_CAP].gain = ADC_V_CAP_RATIO;
-    s_coefficients[V_CAP].bias =
-        -ADC_V_CAP_OFFSET_COUNT * ADC_V_CAP_RATIO;
-
     if(supercap_id == SUPERCAP_ID_UNKNOWN)
     {
         state.board_errors.no_record = 1U;

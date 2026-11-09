@@ -11,6 +11,7 @@
 #include "hrtim.h"
 #include "power_ctrl.h"
 #include "prot_supercap.h"
+#include "bsp_dwt.h"
 
 /**
  * @brief 先保持输出关闭并准备接收，再启动产生采样和保护事件的计数器。
@@ -18,7 +19,14 @@
  */
 void PowerCtrlTask_Init(void)
 {
-    PowerCtrl_Init();
+    BspHrtim_DisableOutput();
+
+    HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+    HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+
+    Bsp_DWT_Init();
+    UID_MatchCalibration();
+
 #if defined(POWER_CTRL_CLOSED_LOOP)
     /* UID 匹配已完成；只在启动时由掩码生成校准汇总，不重复扫描详细错误。 */
     g_power_ctrl.errors.bits.calibration =
@@ -30,8 +38,9 @@ void PowerCtrlTask_Init(void)
     BspAdcFeedback_Init();
     USER_UART_Init();
     SupercapCan_Init();
-    __HAL_HRTIM_MASTER_CLEAR_IT(&hhrtim1, HRTIM_MASTER_IT_MREP);
-    NVIC_ClearPendingIRQ(HRTIM1_Master_IRQn);
+    
+    PowerCtrl_Init();
+
     if(HAL_HRTIM_WaveformCountStart_IT(&hhrtim1, HRTIM_TIMERID_MASTER
         | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B) != HAL_OK)
     {
@@ -49,6 +58,11 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
     if(hadc == &hadc1)
     {
+        // 测量25 kHz 采样周期
+		Bsp_DWT_Stop(0);
+		Bsp_DWT_Start(0);
+		
+		Bsp_DWT_Start(1);
 #if defined(POWER_CTRL_CLOSED_LOOP)
         BspAdcFeedback_Process();
         PowerCtrl_Task();
@@ -56,6 +70,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
         /* 开环沿用固定比较值，每次回调都调用开启，不执行采样、闭环或错误关断。 */
         BspHrtim_EnableOutput();
 #endif
+		
+		Bsp_DWT_Stop(1);
     }
 }
 

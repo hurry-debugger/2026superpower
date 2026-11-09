@@ -27,10 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "UID.h"
-#include "adccalibration.h"
 #include "power_ctrl_task.h"
-#include "EventRecorder.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,9 +37,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/** @brief TA1/TA2/TB1/TB2 四路功率输出，仅在完整校准后允许启动。 */
-#define SUPERPOWER_POWER_OUTPUT_MASK \
-    (HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2)
 
 /* USER CODE END PD */
 
@@ -104,22 +98,6 @@ int main(void)
   MX_USART1_UART_Init();
   MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
-	EventRecorderInitialize(EventRecordAll, 1U);
-	EventRecorderStart();
-    /** @brief 启动先关断输出；运行期启停仅由 PowerCtrl 管理。 */
-    if(HAL_HRTIM_WaveformOutputStop(&hhrtim1, SUPERPOWER_POWER_OUTPUT_MASK) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    UID_MatchCalibration();
-    if(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    if(HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)
-    {
-        Error_Handler();
-    }
 
     /** @brief 准备 DMA/通信后一次启动 Master/A/B；不直接开启输出。 */
     PowerCtrlTask_Init();

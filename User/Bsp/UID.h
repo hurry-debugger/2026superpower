@@ -22,9 +22,15 @@ typedef struct
 } UID_t;
 
 /**
+ * @brief 本板完整 UID，便于在调试器中查看三个 32 位字。
+ * @note 读取前为零；仅由启动主线程中的 UID_Read() 更新，其他模块只读。
+ */
+extern UID_t g_uid;
+
+/**
  * @brief 读取当前 MCU 的完整 UID。
  * @return 按 w0、w1、w2 顺序保存的 UID，可直接用于填写校准记录。
- * @note 在启动主线程中调用，不执行外设配置或校准。
+ * @note 在启动主线程中调用，同时更新 g_uid，不执行外设配置或校准。
  */
 UID_t UID_Read(void);
 

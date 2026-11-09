@@ -23,7 +23,8 @@
             ],
             "defines": [
                 "USE_HAL_DRIVER",
-                "STM32G474xx.CMSIS_device_header=<stm32g4xx.h>",
+                "STM32G474xx",
+                "CMSIS_device_header=<stm32g4xx.h>",
                 "__CC_ARM",
                 "__arm__",
                 "__align(x)=",

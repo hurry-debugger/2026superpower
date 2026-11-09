@@ -45,15 +45,6 @@ extern "C"
 #define BSP_HRTIM_BUCK_BOOST_EXIT_MAX (1.25f)
 
 /* ==================== 公共接口 ==================== */
-
-/**
- * @brief 关闭四路功率输出，并将私有迟滞状态恢复为非中间模式。
- * @pre MX_HRTIM1_Init() 已完成；在启动主线程中调用，无其他 HRTIM 使用者并发运行。
- * @note 不启动或停止计数器，不改写外设配置和比较值；HAL 失败进入 Error_Handler()。
- *       后续须先设置有效占空比并等待装载，再由调用方决定是否允许开启输出。
- */
-void BspHrtim_Init(void);
-
 /**
  * @brief 将广义占空比转换为两侧 PWM 比较值，并写入 A/B 的预装载寄存器。
  * @param[in] generalized_duty 理想电容侧电压/底盘侧电压，无单位，由本接口统一限幅。

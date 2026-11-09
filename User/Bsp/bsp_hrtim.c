@@ -24,15 +24,9 @@
 #define BSP_HRTIM_UPDATE_DISABLE_MASK (HRTIM_CR1_TAUDIS | HRTIM_CR1_TBUDIS)
 
 /** @brief 中间调制模式的迟滞状态；仅由 Init 和占空比更新入口修改。 */
-static bool s_buck_boost_mode;
+static bool s_buck_boost_mode = false;
 
 /* ==================== 公共实现 ==================== */
-
-void BspHrtim_Init(void)
-{
-    BspHrtim_DisableOutput();
-    s_buck_boost_mode = false;
-}
 
 void BspHrtim_SetGeneralizedDuty(float generalized_duty)
 {

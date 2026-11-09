@@ -10,6 +10,8 @@
 
 /* ==================== 全局状态 ==================== */
 
+UID_t g_uid;
+
 AdcCalibrationState_t g_adc_calibration_state =
 {
     .supercap_id = SUPERCAP_ID_UNKNOWN
@@ -19,12 +21,11 @@ AdcCalibrationState_t g_adc_calibration_state =
 
 UID_t UID_Read(void)
 {
-    UID_t uid =
-    {
-        .word = {HAL_GetUIDw0(), HAL_GetUIDw1(), HAL_GetUIDw2()}
-    };
+    g_uid.word[0] = HAL_GetUIDw0();
+    g_uid.word[1] = HAL_GetUIDw1();
+    g_uid.word[2] = HAL_GetUIDw2();
 
-    return uid;
+    return g_uid;
 }
 
 bool UID_Equals(const UID_t *a, const UID_t *b)
@@ -36,7 +37,7 @@ bool UID_Equals(const UID_t *a, const UID_t *b)
 
 void UID_MatchCalibration(void)
 {
-    UID_t uid = UID_Read();
+    UID_Read();
     SupercapId_e matched_id = SUPERCAP_ID_UNKNOWN;
     uint32_t match_count = 0U;
 
@@ -50,7 +51,7 @@ void UID_MatchCalibration(void)
             continue;
         }
 
-        if(UID_Equals(&uid, record_uid))
+        if(UID_Equals(&g_uid, record_uid))
         {
             matched_id = (SupercapId_e)id;
             match_count++;
@@ -63,7 +64,7 @@ void UID_MatchCalibration(void)
     }
 
     AdcCalibrationState_t state = AdcCalibration_Init(matched_id);
-    state.uid = uid;
+    state.uid = g_uid;
 
     if(match_count > 1U)
     {
