@@ -71,7 +71,7 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 /** @brief 二选一编译模式；仅定义一项，power_ctrl.c 检查互斥。 */
 #define POWER_CTRL_CLOSED_LOOP
-/* #define POWER_CTRL_OPEN_LOOP */
+//#define POWER_CTRL_OPEN_LOOP
 
 #if (defined(POWER_CTRL_CLOSED_LOOP) + defined(POWER_CTRL_OPEN_LOOP)) != 1
 #error Select_exactly_one_power_control_mode_in_main_h

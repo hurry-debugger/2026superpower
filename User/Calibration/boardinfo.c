@@ -18,7 +18,7 @@ void BoardInfo_Init(void)
     g_board_info.uncalibrated_channel_mask = ADC_CAL_ALL_CHANNELS_MASK;
     UID_Read(&g_board_info.uid);
     g_board_info.supercap_id = SUPERCAP_ID_UNKNOWN;
-    uint32_t match_count = 0U;
+    uint32_t match_count = 0U; 
 
     for(uint32_t id = SUPERCAP_ID_01; id < SUPERCAP_COUNT; id++)
     {
