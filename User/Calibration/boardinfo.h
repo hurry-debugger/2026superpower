@@ -30,20 +30,21 @@ typedef struct
     SupercapId_e supercap_id; /**< 唯一匹配的记录下标，未识别时为 UNKNOWN。 */
     BoardError_t board_errors; /**< 板卡识别错误，按具名位域查看。 */
     AdcCalibrationChannelError_t channel_errors[ADC_CHANNEL_COUNT]; /**< 各通道独立拟合错误。 */
-    uint32_t valid_channel_mask; /**< 通过拟合校验的通道位；不是 DMA 同步标志。 */
+    uint32_t uncalibrated_channel_mask; /**< 对应 AdcChannel_e 的位为 1 表示未校准；非零表示存在未校准通道。 */
 } BoardInfo_t;
 
 /**
  * @brief boardinfo.c 中唯一定义；启动初始化直接填写，消费者运行后只读。
- * @note 有效掩码初始为零；不得手动修改错误或掩码绕过校准门槛。
+ * @note 初始化时标记全部通道未校准，成功通道逐位清除；仅供诊断，不参与控制错误汇总。
+ *       不手动修改诊断结果；未校准通道沿用默认增益和偏置，其他保护条件仍生效。
  */
 extern BoardInfo_t g_board_info;
 
 /**
  * @brief 读取 UID、唯一匹配板卡记录，并逐通道拟合、汇总板卡信息。
- * @pre 仅在启动主线程调用，功率输出关闭，换算和状态消费者尚未运行。
- * @note 跳过全零 UID 槽位；无匹配或重复匹配不执行拟合，有效掩码保持零。
- *       拟合失败保留通道原有系数，首次启动时为理论值；不控制 HRTIM 输出。
+ * @pre 仅在启动主线程调用一次，功率输出关闭，换算和状态消费者尚未运行。
+ * @note 跳过全零 UID 槽位；无匹配或重复匹配不执行拟合，全部通道保持未校准。
+ *       拟合成功清除对应未校准位；失败保留该位及默认系数，不控制 HRTIM 输出。
  */
 void BoardInfo_Init(void);
 

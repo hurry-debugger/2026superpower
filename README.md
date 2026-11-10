@@ -22,9 +22,10 @@
 
 ## 当前实现
 
-启动先关闭四路输出，完成 UID 唯一匹配、五路校准拟合及 ADC 硬件自校准。
-SuperPower_Init 初始化控制，闭环按全通道有效掩码生成一次 calibration 汇总，
-在反馈仍为零时预先检查普通错误，再准备 DMA、UART、CAN 并启动 Master/A/B。
+SuperPower_Init 先关闭四路输出，执行 ADC 硬件自校准，再识别 UID 并尝试逐通道拟合。
+板卡信息中的 uncalibrated_channel_mask 按通道标记未校准状态，不生成控制错误；
+未校准通道使用现有默认增益和零点偏置，成功通道使用拟合系数，均可参与闭环。
+随后准备 DMA、UART、CAN，初始化控制并启动 Master/A/B；普通错误由 Master 更新。
 固定外设配置由 CubeMX 和静态审查保证，不在业务代码中重复检查。
 
 ADC1/ADC2 使用 40/10 个半字的循环 DMA。闭环 ADC1 TC 每 40 μs 直接读取活动数组，
@@ -38,10 +39,10 @@ Master 每 1 ms 先检查普通错误，再快照发送两帧 CAN。电容、底
 电池上界约 36.3 V 来自 ADC 理论量程，用于判断数据合理性，不是器件额定电压。
 底盘在有效区间按 >30/>29/>28/>27 V 降序累加 125/25/5/1，达到 300 后饱和；
 不高于 27 V 时清零，包括下电低压；跨档保留历史，不加入 12 V 电容限制。
-普通故障重新赋值并可清除，校准汇总不变，短路锁存永不被慢速发布覆盖。
+普通故障重新赋值并可清除，短路锁存永不被慢速发布覆盖。
 
-错误位为 cap_voltage、chassis_voltage、bat_voltage、referee、calibration、
-power_off、short_circuit，电池电压与裁判主动下电各有唯一职责。
+错误位为 cap_voltage、chassis_voltage、bat_voltage、referee、power_off、short_circuit，
+电池电压与裁判主动下电各有唯一职责；未校准提示不参与错误字汇总。
 慢速检查用两个短 PRIMASK 区完成三电压快照和错误字发布，判断在区外；
 发布时合并最新短路位，只发布错误字；ADC 据此进入 PROTECT 并清零恢复计数。
 ADC 唯一管理运行期 PWM、比较值、PID 和恢复。前馈所需电压不满足底盘 [15,31] V、
@@ -66,7 +67,8 @@ A 端目标为 P_lim-P_in+P_A-u_E，其中 P_lim 来自 robot_status.chassis_pow
 算法层保留这些可选实现供后续调试；控制层仅计算、选择及限幅，不处理积分回算或撤销。
 NONE 模式只限制最终输出，不启用积分限幅；零误差时 Output=0，Iout 保留。
 13 A 只约束目标，电压覆盖期间实际电流及 15 A 峰值不能由此保证；校准范围独立保持 15 A。
-真实 UID/校准和 PID 参数仍待填写；当前默认记录无法通过校准，禁止闭环输出。
+校准采集点和 PID 参数仍待填写；未校准不单独禁止闭环，其他故障和恢复条件仍生效。
+调试器查看 g_board_info.uncalibrated_channel_mask：0 为全部已校准，非零表示仍有未校准通道。
 当前源码没有 PARAMETERS_READY/PWM_READY 门槛宏，不把旧说明当作已实现的保护。
 
 超电控制板可接收的现有 0x0201 为 17 字节，保留 bullet_speed_limit；0x0202 为 14 字节，

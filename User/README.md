@@ -1,7 +1,7 @@
 # 自维护固件目录
 
 当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
-采样、裁判接收和控制已接入调度；当前校准模板无效，禁止闭环输出，PID参数仍待填写。
+采样、裁判接收和控制已接入调度；当前采集点尚未校准，逐通道使用默认系数参与闭环，PID参数仍待填写。
 启动保留UID匹配及拟合，ADC1 DMA接入近似平均、过流和控制；Master检查普通错误、发送CAN并启动USART1波形DMA。
 不启用可选低通；上板验证待完成。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
@@ -35,9 +35,9 @@ Algorithm 不依赖 HAL；USART/CAN 的 HAL 封装位于 Procotol，Bsp 管理�
 boardinfo.c 定义唯一的 BoardInfo_t g_board_info，保存板卡 UID、ID、识别错误和 ADC 校准结果；
 UID_Read(&g_board_info.uid) 直接写入 UID，UID_Equals() 只负责完整 UID 比较。
 UID 层不依赖校准模块，不保存 g_uid，也不创建局部板卡信息副本。
-BoardInfo_Init() 唯一匹配记录后调用 AdcCalibration_FitChannel(id, channel)，直接写入全局通道错误并汇总有效掩码。
+BoardInfo_Init() 唯一匹配记录后调用 AdcCalibration_FitChannel(id, channel)，直接写入全局通道错误并清除成功通道的未校准位。
 adc_calibration_record.c/.h 保存记录、理论参数、系数缓存、拟合及换算接口，不依赖板卡模块。
-其他消费者只读 g_board_info，禁止手改错误位或有效掩码来允许控制。
+其他消费者只读 g_board_info，不手改诊断结果；校准状态不作为控制输出门槛。
 
 校准流程不需要脚本或 Excel：
 
@@ -53,22 +53,26 @@ adc_calibration_record.c/.h 保存记录、理论参数、系数缓存、拟合�
 5. 重新编译、烧录同一固件；启动时以中心化最小二乘计算 `gain`、`bias`，之后不再拟合。
 
 记录结构只有 UID 和 `[5通道 * 2行][固定点数]` 数组两个成员。全零 UID 槽位不参与匹配。
-当前模板没有真实 UID 或采集数据，默认不启动功率输出。更换 MCU 后重新绑定，更换采样电阻、
+当前采集点仍为 NAN 模板，未校准通道使用默认增益和偏置。更换 MCU 后重新绑定，更换采样电阻、
 放大器等模拟前端后重新校准。拟合后的数值校验不等于实板精度验收；不预设残差合格阈值。
 
-无记录或重复匹配使用理论值供观察；有记录时有效通道缓存拟合系数，失败通道保留理论值。
-全局状态记录当前 UID、超电 ID、板卡错误位域、每通道错误位域及有效通道掩码。
+无记录或重复匹配时五路使用默认系数；唯一匹配时成功通道使用拟合系数，失败通道保留默认值。
+默认 gain = ADC_<通道>_RATIO，bias = -ADC_<通道>_OFFSET_COUNT * gain，不重复扣零点。
+全局状态记录当前 UID、超电 ID、板卡错误位域、每通道错误位域及未校准通道掩码。
+调试器查看 g_board_info.uncalibrated_channel_mask，低五位按 AdcChannel_e 顺序排列：
+对应位为1表示未校准，0x1F为全部未校准，0为全部成功；仅V_BAT成功时为0x1D。
+掩码非零仅表示存在未校准通道，不生成控制错误，也不通过CAN上报。
 原始计数的 NAN/无穷归入 count_range，实测值的 NAN/无穷归入 value_range；
 已删除恒零的 missing_point、nonfinite 字段，通道错误仍占一个32位字。每路首个错误停止拟合，不静默丢弃坏点。
-负 Bias 合法。启动控制只读取全通道有效掩码是否为 `ADC_CAL_ALL_CHANNELS_MASK`，
-由此生成一次 calibration 汇总；未知/重复 UID、非法 ID 或任一拟合失败均无法得到完整掩码，
-详细板卡/通道原因留在校准模块。底盘、电容校准共用31 V，两路电流校准使用独立的
+负 Bias 合法。未校准不单独阻止闭环，其他故障、前馈条件及恢复等待仍按当前控制实现执行。
+未知或重复 UID 不执行拟合，保留板卡识别原因；拟合失败保留通道原因和对应未校准位。
+底盘、电容校准共用31 V，两路电流校准使用独立的
 ADC_CAL_CURRENT_MAX_A=15 A，不随13 A平均目标参考上限改变；
 电池实测值只要求非负有限，没有43 V或其他物理上限，计数、正增益及可表示性检查保留。
 
-main 先禁用输出，再匹配拟合；保留 ADC 硬件自校准、DMA 和采样触发计数器启动。
-这是启动门槛，不包含运行期测量故障关断。再次匹配或拟合只能在功率输出关闭、消费者尚未
-运行时进行；不能与中断换算并发。初始化后状态和系数保持只读，不默认使用 volatile。
+SuperPower_Init先禁用输出，再完成ADC硬件自校准、板卡识别和逐通道拟合，随后启动DMA与计数器。
+BoardInfo_Init仅在启动主线程调用一次，每通道最多拟合一次；不提供运行期重新校准入口。
+初始化后状态和系数保持只读，不与中断换算并发，不默认使用volatile。
 
 ## 平均后转换
 
@@ -94,7 +98,7 @@ BspAdcFeedback_Init();    /* 启动阶段，计数器未运行、输出关闭。
 BspAdcFeedback_Process(); /* 仅闭环ADC1全满回调中，随后调用PowerCtrl_Task。 */
 ```
 
-AdcCalibration_Convert返回输出数组地址，不代表校准成功；无有效校准时结果仅供观察。
+AdcCalibration_Convert返回输出数组地址，不代表校准成功；未校准通道使用默认系数，可参与闭环。
 统一公式为raw_count * gain + bias，拟合偏置直接来自实测数据，不再扣一次零点。
 AdcCalibration_ConvertValue的第三参数单位为V/A，与旧计数零点接口不同。
 
@@ -154,7 +158,7 @@ filter、Bsp/UID、Calibration和运行模块均已登记Keil。采集仅保留�
 
 `g` 为理想电容侧电压/底盘侧电压，无单位，允许大于 1，必须是有限正数，
 随后限幅到 0.05～10。零、负数、NaN 和无穷不属于支持输入，关断须使用独立接口。
-这不是电流方向命令；应用层负责闭环、反馈有效性和校准门槛，Bsp 不读取 ADC 状态。
+这不是电流方向命令；应用层负责闭环和保护条件，未校准提示由板卡信息提供，Bsp 不读取 ADC 状态。
 启停 HAL 返回值失败时进入既有 Error_Handler()；接口不新增状态返回值。
 
 本板原理图第 3 页确定 Timer A 接电容侧、Timer B 接底盘侧；CH1 均接下管，CH2 均接上管。
@@ -199,9 +203,9 @@ Timer A 采用 D_cap，Timer B 采用 D_chassis，周期分别读取当前周期
 不与其他 HRTIM 公共寄存器或 HAL 句柄写入并发；运行期两次设置至少间隔一个完整 PWM 周期。
 临时禁止装载不是全局临界区，也不提供任意中断抢占关断的故障保护能力。
 
-运行顺序为：先关闭输出、完成 UID/拟合及 ADC 硬件校准，再 SuperPower_Init，
-其中 PowerCtrl_Init 调用 BspHrtim_Init，准备 DMA/通信后一次启动三计数器。
-闭环启动先设置校准汇总并检查零初始反馈；PROTECT 每周期关断并预置前馈，
+SuperPower_Init先关闭输出，完成ADC硬件自校准及UID识别/逐通道拟合，再准备DMA/通信、
+调用PowerCtrl_Init初始化四环，最后一次启动三计数器；未校准状态只在板卡信息中记录。
+闭环不生成校准错误，也不因未校准单独阻断输出；PROTECT每周期关断并预置前馈，
 普通错误由1 kHz更新，ADC在错误字为零时累计连续正常控制周期，
 严格超过 500 ms 对应的 12500 次后清零计数并开启输出，不另设装载等待阶段。
 main 不直接开启四路输出。此处是源码调用关系，非硬件运行记录。
@@ -237,7 +241,7 @@ PID_Init，先清零实例；死区为0，不启用电机堵转检测。
 main.h保留未选/双选检查。现有模式分支位于调度层启动和ADC回调，Master当前不分支；
 power_ctrl.c/.h保留完整闭环实现，不增加运行期模式或CAN使能。
 配置集中在 `Config/power_ctrl_config.h`。当前没有PWM_READY/PARAMETERS_READY宏；
-PID系数和真实UID/校准记录仍待填写，默认校准失败禁止闭环输出。
+PID系数和校准采集点仍待填写；未校准逐通道回退默认系数，其他保护和恢复等待保持。
 开环测量保持初值，Master仍可更新错误字，但开环ADC不读取错误字来关断，必须外部隔离MOS驱动。
 
 ### 数据与调用上下文
@@ -335,7 +339,6 @@ AbortReceive 后直接解析并重新启动 DMA；终止或启动失败进入 Er
 | bat_voltage | 电池不满足[15, ADC_V_BAT_MAX_V] V，含无效数值；1 kHz | 正常后清零 |
 | power_off | 裁判底盘输出位为0；1 kHz | 恢复许可后清零 |
 | referee | 共用接收时间戳年龄>300 ms；1 kHz | 超时解除后清零 |
-| calibration | 全通道有效掩码不完整；启动汇总一次 | 运行期不变 |
 | short_circuit | 仅abs(I_CHASSIS)>30 A；25 kHz | 锁存至MCU复位，不自动重启 |
 
 1 kHz分级累计使用同一个chassis_overvoltage_cnt，不另存档位/步长。

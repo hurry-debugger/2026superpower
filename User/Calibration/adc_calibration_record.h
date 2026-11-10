@@ -131,7 +131,7 @@ extern const AdcCalibrationRecord_t g_adc_calibration_records[SUPERCAP_COUNT];
     ((ADC_FULL_SCALE_COUNT - ADC_I_CHASSIS_OFFSET_COUNT) * ADC_I_CHASSIS_RATIO)
 
 
-/** @brief 所有通道均拟合有效的掩码，仅用于校准状态，不代表采样新鲜度。 */
+/** @brief 全部通道位的掩码，用于初始化未校准通道集合，不代表采样新鲜度。 */
 #define ADC_CAL_ALL_CHANNELS_MASK ((1U << ADC_CHANNEL_COUNT) - 1U)
 
 /* ==================== 系数及通道错误类型 ==================== */
@@ -165,7 +165,7 @@ typedef struct
  * @param[in] supercap_id 唯一匹配的有效记录下标，不允许 UNKNOWN。
  * @param[in] channel 有效五路通道之一。
  * @return 本通道错误结构体，所有错误成员为 0 表示成功。
- * @pre 仅在启动主线程、功率输出关闭且换算消费者尚未运行时调用。
+ * @pre 仅在启动主线程、功率输出关闭且换算消费者尚未运行时，每通道调用一次。
  * @note 成功后更新本模块的通道系数；失败保持原有缓存，首次启动时为理论值。
  *       输入范围和拟合端点由 ADC 模拟链理论量程约束，区间外仅检查 float 可表示性。
  */
@@ -190,8 +190,9 @@ float AdcCalibration_ConvertValue(uint16_t raw_count, float gain, float bias);
  * @return 传入的 adc_convert 地址；生命周期由调用方管理，下次写入前结果保持有效。
  * @pre 两个指针均非空，各有 ADC_CHANNEL_COUNT 个元素，输入输出内存不重叠。
  *      调用期间输入保持稳定、输出由本调用独占，系数缓存不允许同时初始化。
- * @note 未拟合或失败通道仍使用理论值供观察；返回地址不表示校准有效，控制启动
- *       必须检查板卡信息中的有效掩码。正常换算不匹配 UID、不拟合、不平均、不执行低通。
+ * @note 未拟合或失败通道使用默认增益和偏置，可参与闭环；返回地址不表示已校准。
+ *       板卡信息按通道保留未校准提示及原因，其他控制保护仍生效。
+ *       正常换算不匹配 UID、不拟合、不平均、不执行低通。
  *       电流正方向为采样电阻 INA240 的 IN+ 侧流向 IN- 侧，实际端口方向待上板验证。
  *       不保证采样同步性，不访问 DMA；可在主线程或中断使用，耗时须在目标板测量。
  */

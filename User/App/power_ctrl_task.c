@@ -29,10 +29,6 @@ void SuperPower_Init(void)
 
     BoardInfo_Init();
 
-    /* UID 匹配已完成；只在启动时由掩码生成校准汇总，不重复扫描详细错误。 */
-    g_power_ctrl.errors.bits.calibration =
-        g_board_info.valid_channel_mask != ADC_CAL_ALL_CHANNELS_MASK;
-    
     Bsp_DWT_Init();
 
     /* 计数器尚未启动，先准备 ADC DMA 和通信，避免首个控制事件使用未初始化接口。 */

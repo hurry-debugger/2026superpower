@@ -15,6 +15,7 @@ BoardInfo_t g_board_info;
 void BoardInfo_Init(void)
 {
     memset(&g_board_info, 0, sizeof(g_board_info));
+    g_board_info.uncalibrated_channel_mask = ADC_CAL_ALL_CHANNELS_MASK;
     UID_Read(&g_board_info.uid);
     g_board_info.supercap_id = SUPERCAP_ID_UNKNOWN;
     uint32_t match_count = 0U;
@@ -45,7 +46,7 @@ void BoardInfo_Init(void)
                && !g_board_info.channel_errors[channel].numeric_range
                && !g_board_info.channel_errors[channel].value_range)
             {
-                g_board_info.valid_channel_mask |= 1U << channel;
+                g_board_info.uncalibrated_channel_mask &= ~(1U << channel);
             }
         }
     }

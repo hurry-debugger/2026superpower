@@ -1,7 +1,7 @@
 /**
  * @file adc_calibration_record.c
  * @brief 保存手填采集记录，启动时拟合 ADC 系数并提供运行期物理量换算。
- * @note 当前只有待填写模板，无真实校准数据；因此默认不允许启动功率输出。
+ * @note 当前采集点仍为待填写模板；未校准通道使用默认增益和偏置，可参与闭环。
  *       从全局状态 uid 读取当前芯片 UID，填入对应槽位；同列填写配对采集值。
  *       更换 MCU 后重新绑定；更换采样电阻或放大器等模拟前端后重新校准。
  */
@@ -58,7 +58,7 @@ const AdcCalibrationRecord_t g_adc_calibration_records[SUPERCAP_COUNT] =
 
 /* ==================== 私有数据 ==================== */
 
-/** @brief 启动时更新，消费者运行后只读；未调用初始化也可用理论值观察。 */
+/** @brief 默认增益为 ratio、偏置为 -offset_count * ratio；启动拟合成功后逐通道替换，运行后只读。 */
 static AdcCalibrationCoeff_t s_coefficients[ADC_CHANNEL_COUNT] =
 {
     [V_CHASSIS] = {ADC_V_CHASSIS_RATIO, -ADC_V_CHASSIS_OFFSET_COUNT * ADC_V_CHASSIS_RATIO},

@@ -18,6 +18,7 @@ typedef enum
  * @brief 电源控制错误标志；各成员 1 表示错误有效，0 表示无该错误。
  * @note all 与 bits 共享存储；all 只用于内部错误汇总，不直接序列化。
  *       使用目标编译器位域布局，不规定各错误的整数位序；保留成员始终为 0。
+ *       未校准提示保存在板卡信息中，不属于控制错误，不单独阻止闭环运行。
  */
 typedef union
 {
@@ -28,10 +29,9 @@ typedef union
         uint32_t chassis_voltage : 1; /**< 底盘电压异常或分级过压累计达到门槛。 */
         uint32_t bat_voltage : 1; /**< 电池电压不在 [15, ADC_V_BAT_MAX_V]，含无效数值。 */
         uint32_t referee : 1; /**< 共用接收时间戳超时，不代表完整报文有效性检查。 */
-        uint32_t calibration : 1; /**< 启动时全通道校准掩码不完整，运行期不变。 */
         uint32_t power_off : 1; /**< 裁判关闭底盘输出，不重复判断电池电压。 */
         uint32_t short_circuit : 1; /**< 底盘电流绝对值超过 30 A，锁存至 MCU 复位。 */
-        uint32_t reserved : 25; /**< 保留，保持为零。 */
+        uint32_t reserved : 26; /**< 保留，保持为零。 */
     } bits; /**< 按具体错误类型读写的位域视图，与 all 共用存储。 */
 } PowerCtrlError_t;
 
@@ -47,7 +47,7 @@ typedef union
 typedef struct
 {
     volatile PowerCtrlState_e state;
-    volatile PowerCtrlError_t errors; /**< 普通错误重算，校准汇总与短路锁存保留。 */
+    volatile PowerCtrlError_t errors; /**< 普通错误重算，短路锁存保留；不含未校准提示。 */
     volatile uint32_t errclearcnt; /**< ADC 累计恢复周期；保护条件成立或进入 CTRL 时清零。 */
     uint32_t chassis_overvoltage_cnt; /**< 仅 1 kHz 更新的加权累计，范围 0～300。 */
     float A_power_fdb; /**< A 端 V_CHASSIS*I_CHASSIS，单位 W；正充电、负放电。 */
@@ -67,18 +67,18 @@ extern PowerCtrl_t g_power_ctrl;
 /**
  * @brief 共用启动初始化：关闭输出、清零状态、进入 PROTECT 并初始化四环。
  * @pre MX_HRTIM1_Init 已完成，计数器和控制中断尚未启动；仅调用一次。
- * @note 仅此入口清除短路锁存；闭环调度随后设置校准汇总并预先检查普通错误。
+ * @note 未校准提示由板卡信息独立记录；本入口不检查校准状态，不预查普通错误。
  *       不初始化采样或裁判存储，不启动计数器，不修改外设配置。
  */
 void PowerCtrl_Init(void);
 
 /**
  * @brief 1 kHz 更新普通故障、分级过压累计及下电条件。
- * @pre 启动时已设置 calibration 汇总位；运行期只由 Master 1 kHz 调用。
+ * @pre 控制已初始化；运行期只由 Master 1 kHz 调用，不要求通道均已校准。
  *      允许在 ADC 启动前预调用一次，零初始电压使首次周期检查前保持保护。
  * @note 快照只复制三个电压和错误字；区外计算，发布时保留最新短路位。
  *       只发布错误字，不操作 PWM 或 PID；ADC 下一周期据此保护并清零恢复计数。
- *       无错误不直接开启或复位 PID；校准汇总和短路锁存不随普通故障解除。
+ *       无错误不直接开启或复位 PID；短路锁存不随普通故障解除。
  *       裁判时间戳沿用现有接收代码，不提供新的报文有效性判据。
  */
 void PowerCtrl_UpdateErrors(void);
