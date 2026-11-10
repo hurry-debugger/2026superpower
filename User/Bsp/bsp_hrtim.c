@@ -88,17 +88,10 @@ void BspHrtim_SetGeneralizedDuty(float generalized_duty)
             (uint32_t)((float)chassis_period_count * 0.5f * chassis_upper_duty + 0.5f);
         const uint32_t chassis_compare_end_count = chassis_period_count - chassis_compare_start_count;
 
-        const uint32_t saved_update_disable =
-            hhrtim1.Instance->sCommonRegs.CR1 & BSP_HRTIM_UPDATE_DISABLE_MASK;
-
-        /* 禁止硬件在四次写入之间装载半组参数，不改变调用方原有的更新禁止状态。 */
-        SET_BIT(hhrtim1.Instance->sCommonRegs.CR1, BSP_HRTIM_UPDATE_DISABLE_MASK);
         hhrtim1.Instance->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = cap_compare_start_count;
         hhrtim1.Instance->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP2xR = cap_compare_end_count;
         hhrtim1.Instance->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = chassis_compare_start_count;
         hhrtim1.Instance->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP2xR = chassis_compare_end_count;
-        MODIFY_REG(hhrtim1.Instance->sCommonRegs.CR1, BSP_HRTIM_UPDATE_DISABLE_MASK,
-                   saved_update_disable);
     }
 }
 
