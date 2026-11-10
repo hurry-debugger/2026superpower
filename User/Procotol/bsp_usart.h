@@ -3,7 +3,7 @@
 
 #include "usart.h"
 
-#define   JUDGE_HUART     huart1
+#define   JUDGE_HUART     huart2
 
 //串口DMA接收缓冲区长度
 #define  JUDGE_DATA_LEN		300 

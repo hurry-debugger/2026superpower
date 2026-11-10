@@ -2,7 +2,7 @@
 
 当前已有滤波、UID/校准、HRTIM、BSP 数据发布及四环控制模块，均已登记 Keil。
 采样、裁判接收和控制已接入调度；当前校准模板无效，禁止闭环输出，PID参数仍待填写。
-启动保留UID匹配及拟合，ADC1 DMA接入近似平均、过流和控制；Master检查普通错误并发送CAN。
+启动保留UID匹配及拟合，ADC1 DMA接入近似平均、过流和控制；Master检查普通错误、发送CAN并启动USART1波形DMA。
 不启用可选低通；上板验证待完成。
 新增代码前必须先阅读根目录 `AGENTS.md` 与 `docs/coding_style.md`，在对话中提交逐文件修改清单，
 获得用户同意后再创建目录、代码或修改构建配置。
@@ -15,6 +15,7 @@ User/
 ├── Bsp/          # UID、HRTIM 与采样发布
 ├── Calibration/  # 板卡信息、校准记录、拟合算法及理论换算
 ├── Procotol/     # USART/CAN BSP、超电协议、裁判类型、CRC 与解析（沿用拼写）
+├── Debug/        # USART1 VOFA+ JustFloat 四环波形
 ├── Algorithm/    # 已有 filter.c/.h：整数平均、浮点低通
 └── Config/       # 有明确单位、来源和适用范围的配置
 ```
@@ -262,7 +263,7 @@ Timer A/B关闭NVIC业务中断，保留PWM与ADC触发。
 裁判仍由USART回调直接解析，两类控制命令共用g_judge_rx_update_ms且在CRC前刷新；
 普通保护只据此检查300 ms超时。power_off仅表示机器人状态中的底盘输出位为0。
 
-### 裁判协议与仅接收 USART
+### 裁判协议与双串口
 
 超电控制板可接收的现有0x0201载荷为17字节，保留bullet_speed_limit；0x0202为14字节。
 本轮不改变协议布局或来源说明，reserved3仍为保留字段，入口功率由本板ADC计算。
@@ -271,11 +272,11 @@ Timer A/B关闭NVIC业务中断，保留PWM与ADC触发。
 底盘输出位来自机器人状态载荷；本轮不另存副本、不新增接收状态或改变协议布局。
 接收超时、半帧、载荷一致性及 ARMCC 位域布局仍待另行核对，不能将当前接入解释为通信已完整验证。
 
-Procotol/bsp_usart.c/.h 绑定已生成的 USART1 / DMA1_Channel3 普通 RX DMA。
-USER_UART_Init(void) 保留空闲回调、中断、初始化结构；USART IRQ 在原 HAL IRQ 前处理 IDLE，
-以 RxXferSize 减 DMA 剩余计数取得长度，AbortReceive 后直接解析并重新启动 DMA。
-现有错误回调停止 DMA 后重启；接收返回值、满缓冲及接收故障恢复仍待另行核对，
-本轮不增加重试、半帧重组或采集故障机制，也不修改生成代码中的串口入口。
+Procotol/bsp_usart.c/.h 绑定 USART2 / DMA1_Channel5 普通 RX DMA，115200 baud。
+USART2 IRQ 在 HAL IRQ 前处理 IDLE，以 RxXferSize 减 DMA 剩余计数取得长度，
+AbortReceive 后直接解析并重新启动 DMA；终止或启动失败进入 Error_Handler。
+错误恢复只终止和重启 USART2 接收，不操作 USART1 的调试发送。
+满缓冲、半帧重组及运行期接收故障恢复仍待实板验证，不据此宣称通信全部通过。
 
 ### 闭环控制关系
 
@@ -405,9 +406,33 @@ Master在保存/恢复PRIMASK的短临界区复制电压、电流、错误和状
 
 Master底层计数250 kHz、周期4 μs，重复计数249，通过MREP产生1 kHz普通保护/CAN中断。
 Timer A/B的NVIC关闭；当前生成配置仍保留Timer B外设REP请求，不产生CPU业务回调，代理不改配置。
-NVIC：ADC1 DMA=0，ADC2 DMA和Master=1，USART/UART DMA/FDCAN=3，SysTick=15。
+NVIC：ADC1 DMA=0，ADC2 DMA和Master=1，USART1/UART DMA/FDCAN=3，SysTick=15。
+当前生成源码 USART2 IRQ 仍为0，须由用户在CubeMX改为3并重新生成；本轮不改生成配置。
 周期、请求、预装载和优先级由CubeMX配置和静态审查保证，SuperPower_Init不重复核对。
-UART固定为USART1/DMA1_Channel3普通接收，不在初始化中复查绑定和模式，UART模块为必选。
+裁判为USART2/DMA1_Channel5普通接收，调试为USART1/DMA1_Channel4普通发送；不在运行期复查固定绑定。
 CAN仅在BSP配置过滤器时保留容量边界检查。g_supercap_can记录底盘模式及发送忙/失败次数。
 采样、数值、500 ms恢复、CAN帧和最坏40 μs执行时间均待上板验证。
 接受活动数组近似平均；DMA停更可能保持最后输出，超期可能合并事件并改变控制间隔，均无独立关断机制。
+
+## VOFA+ 调试波形
+
+USART1 TX=PB6、RX=PB7，1152000 baud、8N1；连接USB串口的RX与共地后，
+在VOFA+选择JustFloat协议。裁判USART2 TX=PB3、RX=PB4，115200 baud，双串口可同时工作。
+Master 1 kHz在普通保护和CAN发送后调用DataWave(&huart1)。
+
+调试器修改volatile DebugWave_e g_debug_wave，默认DEBUG_WAVE_CURRENT。
+
+| 枚举值 | 通道1～3 | 通道4～6 | 实际帧长 |
+| --- | --- | --- | --- |
+| DEBUG_WAVE_OFF=0 | 不启动新帧 | 无 | 0 |
+| DEBUG_WAVE_CURRENT=1 | 电流目标A、反馈A、无量纲输出修正 | 无 | 16字节 |
+| DEBUG_WAVE_CURRENT_VOLTAGE=2 | 电流目标A、反馈A、无量纲输出修正 | 电压目标V、反馈V、无量纲输出修正 | 28字节 |
+| DEBUG_WAVE_POWER=3 | 功率目标W、反馈W、输出电流A | 无 | 16字节 |
+| DEBUG_WAVE_ENERGY=4 | 能量目标J、反馈J、输出功率修正W | 无 | 16字节 |
+
+数据直接来自对应PID的Target、Measure、Output；功率和能量档独立打印，非法枚举值不启动新帧。
+保护及开环状态下PID可能为初值或保留旧值，内环Output不是最终占空比；切换档位后同步调整上位机通道标签。
+只保留一个128字节发送缓冲区，按实际通道数发送并追加00 00 80 7F帧尾，不能把128字节全部发送。
+DMA忙时跳帧且不改缓冲区；关闭档不打断已启动的DMA。仅快照字段时保存/恢复PRIMASK，
+帧尾及HAL发送在区外执行。私有s_data_scope.tx_error_count记录DMA启动失败，调试器可观察。
+最大28字节在线路上理论约243 μs；临界区、控制中断延迟和实际帧率尚未上板测量。

@@ -1,6 +1,6 @@
 /**
  * @file power_ctrl_task.c
- * @brief ADC1 DMA 25 kHz 采样/过流/控制，Master 1 kHz 普通保护及 CAN 调度。
+ * @brief ADC1 DMA 25 kHz 采样/过流/控制，Master 1 kHz 普通保护、CAN 及 DMA 波形调度。
  */
 #include "power_ctrl_task.h"
 
@@ -10,6 +10,7 @@
 #include "bsp_adc.h"
 #include "bsp_hrtim.h"
 #include "bsp_usart.h"
+#include "data_scope.h"
 #include "hrtim.h"
 #include "power_ctrl.h"
 #include "prot_supercap.h"
@@ -72,7 +73,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 }
 
 /**
- * @brief Master 1 kHz 先检查普通故障，再快照并发送经典 CAN。
+ * @brief Master 1 kHz 依次检查普通故障、发送 CAN 并启动非阻塞波形 DMA。
  * @param[in] hhrtim 产生事件的 HRTIM 句柄。
  * @param[in] timer_index 产生重复事件的计数器索引。
  * @note Master 为优先级 1，允许 ADC1 DMA 抢占；只发布错误字，不开启 PWM 或复位 PID。
@@ -84,5 +85,6 @@ void HAL_HRTIM_RepetitionEventCallback(HRTIM_HandleTypeDef *hhrtim, uint32_t tim
     {
         PowerCtrl_UpdateErrors();
         SupercapCan_SendStatus();
+        DataWave(&huart1);
     }
 }
