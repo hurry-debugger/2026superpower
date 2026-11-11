@@ -15,10 +15,6 @@
 #define POWER_CTRL_CAP_CURRENT_MAX_A (13.0f)
 /** @brief 用户指定的 B 端峰值设计约束 A；仅记录约束，本轮未实现峰值保护。 */
 #define POWER_CTRL_CAP_CURRENT_PEAK_A (15.0f)
-/** @brief 港科 RM2024 参考分界 V；低于此值仅允许充电目标，不主动请求放电。 */
-#define POWER_CTRL_CAP_LOW_VOLTAGE_V (5.0f)
-/** @brief 港科 RM2024 参考分界 V；达到后恢复正常平均目标，不是硬欠压门槛。 */
-#define POWER_CTRL_CAP_NORMAL_VOLTAGE_V (12.0f)
 /** @brief 用户确认的低压充电平均目标上限 A，参考港科 RM2024；本板能力待测。 */
 #define POWER_CTRL_CAP_LOW_CHARGE_CURRENT_A (4.0f)
 /**
@@ -27,13 +23,20 @@
  *       此宏不直接限制 A 端目标功率；目标电流另受电容电压分段边界限制。
  */
 #define POWER_CTRL_POWER_MAX_W (450.0f)
-/** @brief 用户确认的电容充电目标 V，独立于硬过压阈值。 */
-#define POWER_CTRL_CAP_TARGET_V (29.0f)
-/** @brief 港科 90% 入口比例对应 26.1 V，电压环开始竞争。 */
-#define POWER_CTRL_VOLTAGE_COMPETE_V (26.1f)
-
-/** @brief 用户确认的底盘、电容共用硬过压阈值 V，严格超过即保护。 */
+/**
+ * @brief 用户确认的底盘、电容共用硬过压阈值，单位 V；严格超过即保护，当前为 29 V。
+ * @note 修改此最大电压时，须重新计算并同步下列派生宏及相关源码、文档中的电压注释。
+ *       比例来自用户要求；宏表达式自动计算，注释中的当前电压值需人工同步。
+ */
 #define POWER_CTRL_OVERVOLTAGE_V (29.0f)
+/** @brief 电压竞争阈值，最大电压的 85%，单位 V；当前为 24.65 V，严格超过才参与。 */
+#define POWER_CTRL_VOLTAGE_COMPETE_V (POWER_CTRL_OVERVOLTAGE_V * 0.85f)
+/** @brief 电容充电目标，最大电压的 95%，单位 V；当前为 27.55 V。 */
+#define POWER_CTRL_CAP_TARGET_V (POWER_CTRL_OVERVOLTAGE_V * 0.95f)
+/** @brief 正常平均电流目标分界，最大电压的 40%，单位 V；当前为 11.6 V，不是硬欠压门槛。 */
+#define POWER_CTRL_CAP_NORMAL_VOLTAGE_V (POWER_CTRL_OVERVOLTAGE_V * 0.4f)
+/** @brief 低压电流目标分界，最大电压的 20%，单位 V；当前为 5.8 V，低于时不主动请求放电。 */
+#define POWER_CTRL_CAP_LOW_VOLTAGE_V (POWER_CTRL_OVERVOLTAGE_V * 0.2f)
 /** @brief 底盘、电池共用输入下限 V；电池不设置物理电压上限。 */
 #define POWER_CTRL_INPUT_MIN_V (15.0f)
 /** @brief 用户指定的底盘过流关断阈值 A：450W / 20V */

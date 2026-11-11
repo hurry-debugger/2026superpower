@@ -146,13 +146,13 @@ static void PowerCtrl_DutyCalcu(void)
 
 /**
  * @brief 计算低压目标限流、能量修正后的入口功率误差及内环占空比竞争。
- * @details 低于 5 V 充电上限 4 A、禁止主动放电；5～12 V 分别连续过渡到 13 A。
+ * @details 低于 5.8 V 充电上限 4 A、禁止主动放电；5.8～11.6 V 分别连续过渡到 13 A。
  *          B 端参考限值乘 Vcap/Vchassis 得到 A 端目标上下界，不引入效率参数。
  *          两个内环均输出相同前馈上的修正量，比较修正量等价于比较占空比。
  * @pre ModeSwitch 已确认前馈及功率有效；generalized_duty 为原始前馈，
  *      A_power_fdb 为 P_A，total_power_fbd 为同周期入口总功率 P_in。
  * @note 13 A 仅约束目标；电压环覆盖可改变实际电流，不能保证 B 端平均或峰值电流。
- *       当前仅运行电流环，其余三环及电压竞争已注释；保留现有调试链路。
+ *       当前运行电流环、电压环及电压竞争；能量环与功率环保持注释，保留现有调试链路。
  *       电流环启用积分限幅和条件积分；达到有效边界时拒绝继续推动饱和的积分变化。
  */
 static void PowerCtrl_CascadePidCalcu(void)
@@ -184,7 +184,7 @@ static void PowerCtrl_CascadePidCalcu(void)
 //        g_power_ctrl.A_power_fdb, g_power_ctrl.power_target_w,
 //        g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
 	
-   /* 电压 PI 同样输出无量纲修正 u_V，以 29 V 为目标，每周期计算。
+   /* 电压 PI 同样输出无量纲修正 u_V，以最大电压的 95%（当前 27.55 V）为目标，每周期计算。
     * 两候选均为 Dff+u，共用前馈，故直接比较 u_V、u_I 即可取较小占空比。
     * NONE 不冻结或跟踪未采用的环，其积分历史仍按基础算法推进。 */
    PID_Calculate(&g_power_ctrl.voltage_pid,
@@ -197,7 +197,7 @@ static void PowerCtrl_CascadePidCalcu(void)
         -BSP_HRTIM_LOOP_DUTY_MAX, BSP_HRTIM_LOOP_DUTY_MAX);
 
 
-   /* 严格高于 26.1 V 才允许电压环限制充电；其余周期完全采用电流候选。 */
+   /* 严格高于最大电压的 85%（当前 24.65 V）才参与竞争；其余周期完全采用电流候选。 */
    if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
       && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output)
        g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;
@@ -288,7 +288,7 @@ void PowerCtrl_UpdateErrors(void)
  */
 static void PowerCtrl_CalculateCurrentLimits(void)
 {
-    /* 低压时限制从电容提取功率，仍允许较小充电目标；5～12 V 连续恢复双向能力。
+    /* 低压时限制从电容提取功率，仍允许较小充电目标；5.8～11.6 V 连续恢复双向能力。
      * 两个成员先作 B 端安培工作值，再原位换算为 A 端边界，避免另存同义副本。 */
     if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_CAP_LOW_VOLTAGE_V)
     {

@@ -25,7 +25,7 @@ typedef union
     uint32_t all; /**< 完整错误字；0 表示无错误，非 0 表示存在错误。 */
     struct
     {
-        uint32_t cap_voltage : 1; /**< 电容电压不满足 (0,31] V，含无效数值。 */
+        uint32_t cap_voltage : 1; /**< 电容电压不满足 (0, POWER_CTRL_OVERVOLTAGE_V]，当前上限 29 V，含无效数值。 */
         uint32_t chassis_voltage : 1; /**< 底盘电压异常或分级过压累计达到门槛。 */
         uint32_t bat_voltage : 1; /**< 电池电压不在 [15, ADC_V_BAT_MAX_V]，含无效数值。 */
         uint32_t referee : 1; /**< 共用接收时间戳超时，不代表完整报文有效性检查。 */
@@ -54,11 +54,11 @@ typedef struct
     float total_power_fbd; /**< A 端功率与底盘用电功率之和的综合反馈，单位 W；由 V_BAT*I_BAT 计算。 */
     float power_target_w; /**< A 端目标功率 P_lim-P_in+P_A-u_E，单位 W；仅 CTRL 更新。 */
     float current_upper_limit_a; /**< A 端正向目标上界 A；B 端充电参考上限乘原始前馈。 */
-    float current_lower_limit_a; /**< A 端负向目标下界 A；低于 5 V 为零，禁止主动请求放电。 */
+    float current_lower_limit_a; /**< A 端负向目标下界 A；低于最大电压的 20%（当前 5.8 V）为零，禁止主动请求放电。 */
     float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
     PID_TypeDef energy_pid; /**< 45 J 能量误差生成修正 u_E，W；每个控制周期计算。 */
     PID_TypeDef power_pid; /**< A 端目标与反馈之差等价于入口功率误差；输出目标电流 A。 */
-    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，高于 26.1 V 参与竞争。 */
+    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，严格高于最大电压的 85%（当前 24.65 V）参与竞争。 */
     PID_TypeDef current_pid; /**< A 端电流误差生成无量纲广义占空比修正。 */
 } PowerCtrl_t;
 
@@ -95,7 +95,8 @@ void PowerCtrl_UpdateErrors(void);
  *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
  *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
- *       当前仅电流环每周期计算，启用积分限幅和条件积分；其余三环及电压竞争已注释。
+ *       当前电流环、电压环每周期计算并竞争；能量环与功率环保持注释。
+ *       电流环启用积分限幅和条件积分，电压环保持 NONE；不增加环间输出跟踪。
  *       电流修正同时受 ±MaxOut 与总占空比边界约束，不按裁判帧更新或执行输出跟踪。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
