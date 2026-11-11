@@ -26,6 +26,9 @@ extern "C"
 /** @brief 同源广义占空比限幅上限，无单位；不代表硬件额定范围。 */
 #define BSP_HRTIM_GENERALIZED_DUTY_MAX (10.0f)
 
+/** @brief 同源环路占空比限幅上限，无单位；不代表硬件额定范围。 */
+#define BSP_HRTIM_LOOP_DUTY_MAX (0.2f)
+
 /** @brief 同源非中间模式的上管基准占空比，无单位；保留周期性自举刷新。 */
 #define BSP_HRTIM_BASE_UPPER_DUTY (0.9f)
 

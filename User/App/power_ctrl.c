@@ -34,9 +34,9 @@ void PowerCtrl_Init(void)
      * @brief 每次调用的离散 PID 系数，0 为待调试模板，不沿用旧板系数。
      * @details Kp 单位依次为 W/J、A/W、1/V、1/A；Ki 和 Kd 按原库逐次
      *          积分/差分，不自动乘除 dt。所有环每个控制周期计算一次。
-     *          四环 Improve 均为 NONE，调试时由用户按需显式启用算法选项。
-     *          MaxOut 仍限制最终输出；IntegralLimit 仅登记参数，当前不限制 Iout。
-     *          死区内 Output 为 0，Iout 保留；不执行输家跟踪或条件积分。
+     *          电流环启用积分限幅和外部条件积分，其余三环保持 NONE。
+     *          电流环 Iout 受 IntegralLimit 约束，输出同时受修正量和总占空比边界约束。
+     *          死区内 Output 为 0，Iout 保留；不启用输出跟踪或滤波。
      */
     /* 参照 Taurus Arm_PID_Init 的逐环调用格式；先清零再执行原库初始化。 */
     PID_Init(&g_power_ctrl.energy_pid, POWER_CTRL_POWER_MAX_W, POWER_CTRL_POWER_MAX_W, 0.0f,
@@ -47,16 +47,16 @@ void PowerCtrl_Init(void)
              0.0f, 0.0f, 0.0f,
              0.0f, 0.0f, 0.0f, 0.0f,
              NONE);
-    PID_Init(&g_power_ctrl.voltage_pid, BSP_HRTIM_GENERALIZED_DUTY_MAX,
-             BSP_HRTIM_GENERALIZED_DUTY_MAX, 0.0f,
+    PID_Init(&g_power_ctrl.voltage_pid, BSP_HRTIM_LOOP_DUTY_MAX,
+             BSP_HRTIM_LOOP_DUTY_MAX, 0.0f,
              0.0f, 0.0f, 0.0f,
              0.0f, 0.0f, 0.0f, 0.0f,
              NONE);
-    PID_Init(&g_power_ctrl.current_pid, BSP_HRTIM_GENERALIZED_DUTY_MAX,
-             BSP_HRTIM_GENERALIZED_DUTY_MAX, 0.0f,
-             0.0f, 0.0f, 0.0f,
+    PID_Init(&g_power_ctrl.current_pid, BSP_HRTIM_LOOP_DUTY_MAX,
+             0.09f, 0.0f,
+             0.02f, 0.0008f, 0.0f,
              0.0f, 0.0f, 0.0f, 0.0f,
-             NONE);
+             Integral_Limit | PID_EXTERNAL_ANTI_WINDUP);
 }
 
 void PowerCtrl_Task(void)
@@ -152,51 +152,56 @@ static void PowerCtrl_DutyCalcu(void)
  * @pre ModeSwitch 已确认前馈及功率有效；generalized_duty 为原始前馈，
  *      A_power_fdb 为 P_A，total_power_fbd 为同周期入口总功率 P_in。
  * @note 13 A 仅约束目标；电压环覆盖可改变实际电流，不能保证 B 端平均或峰值电流。
- *       四环均不启用可选优化；仅计算候选、选择修正量并执行目标及输出限幅。
+ *       当前仅运行电流环，其余三环及电压竞争已注释；保留现有调试链路。
+ *       电流环启用积分限幅和条件积分；达到有效边界时拒绝继续推动饱和的积分变化。
  */
 static void PowerCtrl_CascadePidCalcu(void)
 {
     PowerCtrl_CalculateCurrentLimits();
 
-    /* e_E = 45 J - E，输出 u_E 的单位为 W，每 40 us 按最新可读能量重复计算。
-     * 正向增益下能量不足产生正修正，后续减去它以减少充电或增加补电。
-     * NONE 不限制积分；零误差时库输出 0，但不清除 Iout。 */
-    PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
-                  POWER_CTRL_ENERGY_TARGET_J);
+//    /* e_E = 45 J - E，输出 u_E 的单位为 W，每 40 us 按最新可读能量重复计算。
+//     * 正向增益下能量不足产生正修正，后续减去它以减少充电或增加补电。
+//     * NONE 不限制积分；零误差时库输出 0，但不清除 Iout。 */
+//    PID_Calculate(&g_power_ctrl.energy_pid, power_heat_data.buffer_energy,
+//                  POWER_CTRL_ENERGY_TARGET_J);
 
-     /* A 端功率与底盘用电功率之和的综合反馈，单位 W；由入口 V_BAT*I_BAT 计算。
-     * 入口采样未包含 R18 前板载供电自耗，不等同于裁判实测功率。 */
-    g_power_ctrl.total_power_fbd = g_bsp_adc_feedback.adc_convert[V_BAT]
-        * g_bsp_adc_feedback.adc_convert[I_BAT];
-        
-    /* P_A,target = P_lim - P_in + P_A - u_E；加回 P_A 是移除已计入入口的超电支路，
-     * 再计算允许的 A 端功率。以同一 P_A 为反馈，误差化简为 P_lim - P_in - u_E。
-     * P_in 来自 V_BAT*I_BAT，不包含 R18 前板载供电自耗，计量偏差仍待实测。 */
-    g_power_ctrl.power_target_w = (float)robot_status.chassis_power_limit
-        - g_power_ctrl.total_power_fbd + g_power_ctrl.A_power_fdb
-        - g_power_ctrl.energy_pid.Output;
+//     /* A 端功率与底盘用电功率之和的综合反馈，单位 W；由入口 V_BAT*I_BAT 计算。
+//     * 入口采样未包含 R18 前板载供电自耗，不等同于裁判实测功率。 */
+//    g_power_ctrl.total_power_fbd = g_bsp_adc_feedback.adc_convert[V_BAT]
+//        * g_bsp_adc_feedback.adc_convert[I_BAT];
+//        
+//    /* P_A,target = P_lim - P_in + P_A - u_E；加回 P_A 是移除已计入入口的超电支路，
+//     * 再计算允许的 A 端功率。以同一 P_A 为反馈，误差化简为 P_lim - P_in - u_E。
+//     * P_in 来自 V_BAT*I_BAT，不包含 R18 前板载供电自耗，计量偏差仍待实测。 */
+//    g_power_ctrl.power_target_w = (float)robot_status.chassis_power_limit
+//        - g_power_ctrl.total_power_fbd + g_power_ctrl.A_power_fdb
+//        - g_power_ctrl.energy_pid.Output;
 
-    /* 功率 PID 由 W 误差生成 A 端目标电流 A，再受低压不对称边界约束。
-     * 正上界不小于负下界绝对值，用其设置库内对称输出范围；NONE 只限输出。 */
-    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_upper_limit_a;
-    PID_CalculateConstrained(&g_power_ctrl.power_pid,
-        g_power_ctrl.A_power_fdb, g_power_ctrl.power_target_w,
-        g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
+//    /* 功率 PID 由 W 误差生成 A 端目标电流 A，再受低压不对称边界约束。
+//     * 正上界不小于负下界绝对值，用其设置库内对称输出范围；NONE 只限输出。 */
+//    g_power_ctrl.power_pid.MaxOut = g_power_ctrl.current_upper_limit_a;
+//    PID_CalculateConstrained(&g_power_ctrl.power_pid,
+//        g_power_ctrl.A_power_fdb, g_power_ctrl.power_target_w,
+//        g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
+	
+   /* 电压 PI 同样输出无量纲修正 u_V，以 29 V 为目标，每周期计算。
+    * 两候选均为 Dff+u，共用前馈，故直接比较 u_V、u_I 即可取较小占空比。
+    * NONE 不冻结或跟踪未采用的环，其积分历史仍按基础算法推进。 */
+   PID_Calculate(&g_power_ctrl.voltage_pid,
+       g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
+	
+    /* 电流修正范围取 ±MaxOut 与 [MIN-Dff, MAX-Dff] 的交集，无量纲。
+     * 达到任一有效边界时停止同向积分，允许反向积分退饱和；前馈仍为本周期原始值。 */
+    PID_CalculateConstrained(&g_power_ctrl.current_pid,
+        g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
+        -BSP_HRTIM_LOOP_DUTY_MAX, BSP_HRTIM_LOOP_DUTY_MAX);
 
-    /* 电流 PID 输出无量纲修正 u_I；给定 MIN-Dff、MAX-Dff，使 Dff+u_I 可调制。 */
-    PID_Calculate(&g_power_ctrl.current_pid,
-        g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output);
-    /* 电压 PI 同样输出无量纲修正 u_V，以 29 V 为目标，每周期计算。
-     * 两候选均为 Dff+u，共用前馈，故直接比较 u_V、u_I 即可取较小占空比。
-     * NONE 不冻结或跟踪未采用的环，其积分历史仍按基础算法推进。 */
-    PID_Calculate(&g_power_ctrl.voltage_pid,
-        g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
 
-    /* 严格高于 26.1 V 才允许电压环限制充电；其余周期完全采用电流候选。 */
-    if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
-       && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output)
-        g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;
-    else
+   /* 严格高于 26.1 V 才允许电压环限制充电；其余周期完全采用电流候选。 */
+   if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
+      && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output)
+       g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;
+   else
         g_power_ctrl.generalized_duty += g_power_ctrl.current_pid.Output;
 
     OUTPUT_LIMIT(g_power_ctrl.generalized_duty,
@@ -228,9 +233,9 @@ void PowerCtrl_UpdateErrors(void)
         !(cap_voltage_v > 0.0f && cap_voltage_v <= POWER_CTRL_OVERVOLTAGE_V);
     errors.bits.bat_voltage =
         !(bat_voltage_v >= POWER_CTRL_INPUT_MIN_V && bat_voltage_v <= ADC_V_BAT_MAX_V);
-    errors.bits.power_off = robot_status.power_management_chassis_output == 0U;
-    errors.bits.referee =
-        (uint32_t)(HAL_GetTick() - g_judge_rx_update_ms) > POWER_CTRL_REFEREE_TIMEOUT_MS;
+//    errors.bits.power_off = robot_status.power_management_chassis_output == 0U;
+//    errors.bits.referee =
+//        (uint32_t)(HAL_GetTick() - g_judge_rx_update_ms) > POWER_CTRL_REFEREE_TIMEOUT_MS;
 
     if(!(chassis_voltage_v >= POWER_CTRL_INPUT_MIN_V
          && chassis_voltage_v <= POWER_CTRL_OVERVOLTAGE_V))

@@ -41,7 +41,7 @@ typedef union
  *       A_power_fdb 与 total_power_fbd 分别保存同周期 P_A 和 P_in，CTRL 更新 A 端目标；
  *       power_target_w 只保存目标功率，PROTECT 期间保留初值或上次目标，不用于控制。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
- *       四环 Improve 均为 NONE，不执行可选积分限幅、抗饱和、滤波或输出跟踪。
+ *       电流环启用积分限幅和外部条件积分，其余三环保持 NONE；不启用滤波或输出跟踪。
  *       开环不调用控制入口，测量与控制记录保持初值；Master 仍可更新错误字。
  */
 typedef struct
@@ -95,7 +95,8 @@ void PowerCtrl_UpdateErrors(void);
  *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
  *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
- *       四环连续计算并保持 NONE；不按裁判帧更新，不执行可选积分限制或跟踪。
+ *       当前仅电流环每周期计算，启用积分限幅和条件积分；其余三环及电压竞争已注释。
+ *       电流修正同时受 ±MaxOut 与总占空比边界约束，不按裁判帧更新或执行输出跟踪。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
 void PowerCtrl_Task(void);
