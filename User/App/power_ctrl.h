@@ -58,8 +58,9 @@ typedef struct
     float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
     PID_TypeDef energy_pid; /**< 45 J 能量误差生成修正 u_E，W；每个控制周期计算。 */
     PID_TypeDef power_pid; /**< A 端目标与反馈之差等价于入口功率误差；输出目标电流 A。 */
-    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，严格高于最大电压的 85%（当前 24.65 V）参与竞争。 */
+    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，竞争资格由电压入口迟滞决定。 */
     PID_TypeDef current_pid; /**< A 端电流误差生成无量纲广义占空比修正。 */
+    uint8_t voltage_compete_enabled; /**< 竞争资格历史：0 禁止、1 允许；仅 ADC 运行期读写，初始化及恢复复位清零。 */
 } PowerCtrl_t;
 
 extern PowerCtrl_t g_power_ctrl;
@@ -68,7 +69,7 @@ extern PowerCtrl_t g_power_ctrl;
  * @brief 共用启动初始化：关闭输出、清零状态、进入 PROTECT 并初始化四环。
  * @pre MX_HRTIM1_Init 已完成，计数器和控制中断尚未启动；仅调用一次。
  * @note 未校准提示由板卡信息独立记录；本入口不检查校准状态，不预查普通错误。
- *       不初始化采样或裁判存储，不启动计数器，不修改外设配置。
+ *       竞争资格清零；不初始化采样或裁判存储，不启动计数器，不修改外设配置。
  */
 void PowerCtrl_Init(void);
 
@@ -95,7 +96,9 @@ void PowerCtrl_UpdateErrors(void);
  *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
  *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
- *       当前电流环、电压环每周期计算并竞争；能量环与功率环保持注释。
+ *       当前电流环、电压环每周期计算；能量环与功率环保持注释。
+ *       竞争入口严格高于基础阈值加 1 V（当前 25.65 V）进入，低于基础阈值（24.65 V）退出。
+ *       区间及边界相等时保持资格；初始化及恢复复位清零，允许时取较小修正，否则仅用电流环。
  *       电流环启用积分限幅和条件积分，电压环保持 NONE；不增加环间输出跟踪。
  *       电流修正同时受 ±MaxOut 与总占空比边界约束，不按裁判帧更新或执行输出跟踪。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。

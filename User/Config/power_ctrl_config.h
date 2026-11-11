@@ -29,8 +29,13 @@
  *       比例来自用户要求；宏表达式自动计算，注释中的当前电压值需人工同步。
  */
 #define POWER_CTRL_OVERVOLTAGE_V (29.0f)
-/** @brief 电压竞争阈值，最大电压的 85%，单位 V；当前为 24.65 V，严格超过才参与。 */
+/** @brief 电压竞争基础阈值，最大电压的 85%，单位 V；当前为 24.65 V，严格低于时退出竞争。 */
 #define POWER_CTRL_VOLTAGE_COMPETE_V (POWER_CTRL_OVERVOLTAGE_V * 0.85f)
+/** @brief 用户指定的竞争入口迟滞电压，单位 V；固定为 1 V，不随最大电压缩放。 */
+#define POWER_CTRL_VOLTAGE_COMPETE_HYSTERESIS_V (1.0f)
+/** @brief 竞争进入阈值，基础阈值加迟滞电压，单位 V；当前为 25.65 V，严格超过时进入。 */
+#define POWER_CTRL_VOLTAGE_COMPETE_ENTER_V \
+    (POWER_CTRL_VOLTAGE_COMPETE_V + POWER_CTRL_VOLTAGE_COMPETE_HYSTERESIS_V)
 /** @brief 电容充电目标，最大电压的 95%，单位 V；当前为 27.55 V。 */
 #define POWER_CTRL_CAP_TARGET_V (POWER_CTRL_OVERVOLTAGE_V * 0.95f)
 /** @brief 正常平均电流目标分界，最大电压的 40%，单位 V；当前为 11.6 V，不是硬欠压门槛。 */

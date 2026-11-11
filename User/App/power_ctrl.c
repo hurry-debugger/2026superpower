@@ -195,13 +195,28 @@ static void PowerCtrl_CascadePidCalcu(void)
     PID_CalculateConstrained(&g_power_ctrl.current_pid,
         g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
         -BSP_HRTIM_LOOP_DUTY_MAX, BSP_HRTIM_LOOP_DUTY_MAX);
-
-
-   /* 严格高于最大电压的 85%（当前 24.65 V）才参与竞争；其余周期完全采用电流候选。 */
-   if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_V
-      && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output)
-       g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;
-   else
+		
+	/* 状态迟滞：严格高于 25.65 V 进入，严格低于 24.65 V 退出。
+	 * 回差区间及等于边界时保留资格；该历史仅由 ADC 更新，不表示哪个环胜出。 */
+	if(g_power_ctrl.voltage_compete_enabled != 0U)
+	{
+		if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_VOLTAGE_COMPETE_V)
+			g_power_ctrl.voltage_compete_enabled = 0U;
+	}
+	else if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_ENTER_V)
+	{
+		g_power_ctrl.voltage_compete_enabled = 1U;
+	}
+	
+    /* 资格允许时取较小修正，否则仅用电流环；两环仍每周期计算。 */
+    if(g_power_ctrl.power_pid.Output > 0
+		&& g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output
+		&& g_power_ctrl.voltage_compete_enabled)
+	{	
+		g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
+		g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;			
+	}
+    else
         g_power_ctrl.generalized_duty += g_power_ctrl.current_pid.Output;
 
     OUTPUT_LIMIT(g_power_ctrl.generalized_duty,
@@ -322,6 +337,8 @@ static void PowerCtrl_ResetLoops(void)
     g_power_ctrl.power_pid.PID_reset(&g_power_ctrl.power_pid);
     g_power_ctrl.voltage_pid.PID_reset(&g_power_ctrl.voltage_pid);
     g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
+    /* 恢复时丢弃故障前资格，首个 CTRL 周期按当前电压重新判断。 */
+    g_power_ctrl.voltage_compete_enabled = 0U;
     g_power_ctrl.current_upper_limit_a = 0.0f;
     g_power_ctrl.current_lower_limit_a = 0.0f;
     /* 保留 ModeSwitch 本周期计算的原始前馈、P_A 和 total_power_fbd 中的 P_in。
