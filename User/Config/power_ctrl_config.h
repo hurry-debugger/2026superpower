@@ -29,6 +29,11 @@
  *       比例来自用户要求；宏表达式自动计算，注释中的当前电压值需人工同步。
  */
 #define POWER_CTRL_OVERVOLTAGE_V (29.0f)
+/**
+ * @brief 用户指定的电容最低电压，最大电压的 10%，单位 V；当前为 2.9 V。
+ * @note 严格低于时禁止闭环输出；须外部充电达到此值，其他条件正常后按既有延时恢复。
+ */
+#define POWER_CTRL_CAP_MIN_VOLTAGE_V (POWER_CTRL_OVERVOLTAGE_V * 0.1f)
 /** @brief 电压竞争基础阈值，最大电压的 85%，单位 V；当前为 24.65 V，严格低于时退出竞争。 */
 #define POWER_CTRL_VOLTAGE_COMPETE_V (POWER_CTRL_OVERVOLTAGE_V * 0.85f)
 /** @brief 用户指定的竞争入口迟滞电压，单位 V；固定为 1 V，不随最大电压缩放。 */

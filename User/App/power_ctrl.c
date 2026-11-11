@@ -79,10 +79,10 @@ static void PowerCtrl_ModeSwitch(void)
 {
     /* 过流仍先于前馈计算，命中本周期关断并锁存至 MCU 复位。 */
     if(fabsf(g_bsp_adc_feedback.adc_convert[I_CHASSIS]) > POWER_CTRL_CHASSIS_CURRENT_MAX_A)
-    {
         g_power_ctrl.errors.bits.short_circuit = 1U;
-        g_power_ctrl.state = PROTECT_MODE;
-    }
+        
+    g_power_ctrl.errors.bits.cap_voltage = !(g_bsp_adc_feedback.adc_convert[V_CAP] >= POWER_CTRL_CAP_MIN_VOLTAGE_V 
+                                                && g_bsp_adc_feedback.adc_convert[V_CAP] <= POWER_CTRL_OVERVOLTAGE_V);
 
     g_power_ctrl.generalized_duty = g_bsp_adc_feedback.adc_convert[V_CAP]
         / g_bsp_adc_feedback.adc_convert[V_CHASSIS];
@@ -152,7 +152,8 @@ static void PowerCtrl_DutyCalcu(void)
  * @pre ModeSwitch 已确认前馈及功率有效；generalized_duty 为原始前馈，
  *      A_power_fdb 为 P_A，total_power_fbd 为同周期入口总功率 P_in。
  * @note 13 A 仅约束目标；电压环覆盖可改变实际电流，不能保证 B 端平均或峰值电流。
- *       当前运行电流环、电压环及电压竞争；能量环与功率环保持注释，保留现有调试链路。
+ *       当前运行两个内环；仅正目标电流允许电压竞争，能量环与功率环保持注释。
+ *       电压环胜出后完整复位电流 PID，保留用户观察效果的调试行为。
  *       电流环启用积分限幅和条件积分；达到有效边界时拒绝继续推动饱和的积分变化。
  */
 static void PowerCtrl_CascadePidCalcu(void)
@@ -184,38 +185,51 @@ static void PowerCtrl_CascadePidCalcu(void)
 //        g_power_ctrl.A_power_fdb, g_power_ctrl.power_target_w,
 //        g_power_ctrl.current_lower_limit_a, g_power_ctrl.current_upper_limit_a);
 	
-   /* 电压 PI 同样输出无量纲修正 u_V，以最大电压的 95%（当前 27.55 V）为目标，每周期计算。
-    * 两候选均为 Dff+u，共用前馈，故直接比较 u_V、u_I 即可取较小占空比。
-    * NONE 不冻结或跟踪未采用的环，其积分历史仍按基础算法推进。 */
-   PID_Calculate(&g_power_ctrl.voltage_pid,
-       g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
-	
-    /* 电流修正范围取 ±MaxOut 与 [MIN-Dff, MAX-Dff] 的交集，无量纲。
-     * 达到任一有效边界时停止同向积分，允许反向积分退饱和；前馈仍为本周期原始值。 */
+    /**
+     * @brief 电压 PI 每周期计算无量纲修正 u_V，目标为最大电压的 95%（当前 27.55 V）。
+     * @note 两候选均为 Dff+u，共用前馈，直接比较 u_V、u_I 即可取较小占空比。
+     *       NONE 不冻结或跟踪未采用的电压环，其积分历史仍按基础算法推进。
+     */
+    PID_Calculate(&g_power_ctrl.voltage_pid,
+        g_bsp_adc_feedback.adc_convert[V_CAP], POWER_CTRL_CAP_TARGET_V);
+
+    /**
+     * @brief 电流修正按 ±BSP_HRTIM_LOOP_DUTY_MAX（当前 ±0.2）限幅，无量纲。
+     * @note 达到有效修正边界时拒绝同向积分，允许反向积分退饱和。
+     *       本接口不扣除原始前馈；采用修正后再单独执行总占空比限幅。
+     */
     PID_CalculateConstrained(&g_power_ctrl.current_pid,
         g_bsp_adc_feedback.adc_convert[I_CHASSIS], g_power_ctrl.power_pid.Output,
         -BSP_HRTIM_LOOP_DUTY_MAX, BSP_HRTIM_LOOP_DUTY_MAX);
-		
-	/* 状态迟滞：严格高于 25.65 V 进入，严格低于 24.65 V 退出。
-	 * 回差区间及等于边界时保留资格；该历史仅由 ADC 更新，不表示哪个环胜出。 */
-	if(g_power_ctrl.voltage_compete_enabled != 0U)
-	{
-		if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_VOLTAGE_COMPETE_V)
-			g_power_ctrl.voltage_compete_enabled = 0U;
-	}
-	else if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_ENTER_V)
-	{
-		g_power_ctrl.voltage_compete_enabled = 1U;
-	}
-	
-    /* 资格允许时取较小修正，否则仅用电流环；两环仍每周期计算。 */
-    if(g_power_ctrl.power_pid.Output > 0
-		&& g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output
-		&& g_power_ctrl.voltage_compete_enabled)
-	{	
-		g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
-		g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;			
-	}
+
+    /**
+     * @brief 每个 CTRL 周期独立更新电压资格，不受充放电请求或环间胜负影响。
+     * @note 严格高于 25.65 V 进入，严格低于 24.65 V 退出；区间及等于边界时保持。
+     *       该历史仅由 ADC 更新，不表示本周期采用电压环。
+     */
+    if(g_power_ctrl.voltage_compete_enabled != 0U)
+    {
+        if(g_bsp_adc_feedback.adc_convert[V_CAP] < POWER_CTRL_VOLTAGE_COMPETE_V)
+            g_power_ctrl.voltage_compete_enabled = 0U;
+    }
+    else if(g_bsp_adc_feedback.adc_convert[V_CAP] > POWER_CTRL_VOLTAGE_COMPETE_ENTER_V)
+    {
+        g_power_ctrl.voltage_compete_enabled = 1U;
+    }
+
+    /**
+     * @brief 仅正目标电流、资格允许且电压修正更小时采用电压环，其余均用电流修正。
+     * @note power_pid.Output 为 A 端目标电流 A，正值表示充电请求，不代表实测方向。
+     *       保留调试行为：先比较输出，电压环每次胜出后完整复位电流 PID，再叠加电压修正。
+     *       复位清除积分、误差历史及输出；效果待观察，不代表输出跟踪或无扰切换。
+     */
+    if(g_power_ctrl.power_pid.Output > 0.0f
+       && g_power_ctrl.voltage_pid.Output < g_power_ctrl.current_pid.Output
+       && g_power_ctrl.voltage_compete_enabled != 0U)
+    {
+        g_power_ctrl.current_pid.PID_reset(&g_power_ctrl.current_pid);
+        g_power_ctrl.generalized_duty += g_power_ctrl.voltage_pid.Output;
+    }
     else
         g_power_ctrl.generalized_duty += g_power_ctrl.current_pid.Output;
 
@@ -225,6 +239,7 @@ static void PowerCtrl_CascadePidCalcu(void)
 /**
  * @brief 1 kHz 发布普通错误，避免在 ADC 控制周期内重复检查。
  * @note 局部快照保存 ADC 可抢占覆盖的反馈，不复用仍在运行的控制记录。
+ *       电容低于最大电压的 10% 时保护，须外部充电达到下界，再按既有连续正常延时恢复。
  *       电池电压使用输入下限和 ADC 理论量程上限判断数据合理性，不作为器件额定值。
  */
 void PowerCtrl_UpdateErrors(void)
@@ -245,7 +260,8 @@ void PowerCtrl_UpdateErrors(void)
     __set_PRIMASK(primask);
 
     errors.bits.cap_voltage =
-        !(cap_voltage_v > 0.0f && cap_voltage_v <= POWER_CTRL_OVERVOLTAGE_V);
+        !(cap_voltage_v >= POWER_CTRL_CAP_MIN_VOLTAGE_V
+          && cap_voltage_v <= POWER_CTRL_OVERVOLTAGE_V);
     errors.bits.bat_voltage =
         !(bat_voltage_v >= POWER_CTRL_INPUT_MIN_V && bat_voltage_v <= ADC_V_BAT_MAX_V);
 //    errors.bits.power_off = robot_status.power_management_chassis_output == 0U;

@@ -25,7 +25,7 @@ typedef union
     uint32_t all; /**< 完整错误字；0 表示无错误，非 0 表示存在错误。 */
     struct
     {
-        uint32_t cap_voltage : 1; /**< 电容电压不满足 (0, POWER_CTRL_OVERVOLTAGE_V]，当前上限 29 V，含无效数值。 */
+        uint32_t cap_voltage : 1; /**< 电容不满足 [POWER_CTRL_CAP_MIN_VOLTAGE_V, POWER_CTRL_OVERVOLTAGE_V]，当前 [2.9,29] V，含无效数值。 */
         uint32_t chassis_voltage : 1; /**< 底盘电压异常或分级过压累计达到门槛。 */
         uint32_t bat_voltage : 1; /**< 电池电压不在 [15, ADC_V_BAT_MAX_V]，含无效数值。 */
         uint32_t referee : 1; /**< 共用接收时间戳超时，不代表完整报文有效性检查。 */
@@ -58,9 +58,9 @@ typedef struct
     float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
     PID_TypeDef energy_pid; /**< 45 J 能量误差生成修正 u_E，W；每个控制周期计算。 */
     PID_TypeDef power_pid; /**< A 端目标与反馈之差等价于入口功率误差；输出目标电流 A。 */
-    PID_TypeDef voltage_pid; /**< 无量纲占空比修正；每周期计算，竞争资格由电压入口迟滞决定。 */
-    PID_TypeDef current_pid; /**< A 端电流误差生成无量纲广义占空比修正。 */
-    uint8_t voltage_compete_enabled; /**< 竞争资格历史：0 禁止、1 允许；仅 ADC 运行期读写，初始化及恢复复位清零。 */
+    PID_TypeDef voltage_pid; /**< 无量纲修正；每周期计算，仅正目标电流且电压资格允许时参与竞争。 */
+    PID_TypeDef current_pid; /**< A 端电流误差生成无量纲修正；电压环胜出后完整复位本实例以观察效果。 */
+    uint8_t voltage_compete_enabled; /**< 电压资格历史：0 禁止、1 允许；运行期仅 ADC 更新，启动全局零初始化、恢复复位清零。 */
 } PowerCtrl_t;
 
 extern PowerCtrl_t g_power_ctrl;
@@ -69,7 +69,8 @@ extern PowerCtrl_t g_power_ctrl;
  * @brief 共用启动初始化：关闭输出、清零状态、进入 PROTECT 并初始化四环。
  * @pre MX_HRTIM1_Init 已完成，计数器和控制中断尚未启动；仅调用一次。
  * @note 未校准提示由板卡信息独立记录；本入口不检查校准状态，不预查普通错误。
- *       竞争资格清零；不初始化采样或裁判存储，不启动计数器，不修改外设配置。
+ *       启动竞争资格依赖全局零初始化，本函数不另赋值；不初始化采样或裁判存储，不启动计数器。
+ *       不修改外设配置。
  */
 void PowerCtrl_Init(void);
 
@@ -79,7 +80,8 @@ void PowerCtrl_Init(void);
  *      允许在 ADC 启动前预调用一次，零初始电压使首次周期检查前保持保护。
  * @note 快照只复制三个电压和错误字；区外计算，发布时保留最新短路位。
  *       只发布错误字，不操作 PWM 或 PID；ADC 下一周期据此保护并清零恢复计数。
- *       无错误不直接开启或复位 PID；短路锁存不随普通故障解除。
+ *       电容低于最大电压的 10% 时置 cap_voltage；外部充电达到下界后清除欠压错误。
+ *       无错误不直接开启或复位 PID，仍须连续正常约 500 ms；短路锁存不随普通故障解除。
  *       裁判时间戳沿用现有接收代码，不提供新的报文有效性判据。
  */
 void PowerCtrl_UpdateErrors(void);
@@ -98,9 +100,12 @@ void PowerCtrl_UpdateErrors(void);
  *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
  *       当前电流环、电压环每周期计算；能量环与功率环保持注释。
  *       竞争入口严格高于基础阈值加 1 V（当前 25.65 V）进入，低于基础阈值（24.65 V）退出。
- *       区间及边界相等时保持资格；初始化及恢复复位清零，允许时取较小修正，否则仅用电流环。
+ *       区间及边界相等时保持资格；启动依赖全局零初始化，恢复时清零；每个 CTRL 周期更新资格。
+ *       仅 power_pid.Output > 0.0f、资格允许且电压修正更小时采用电压环，其余均用电流环。
+ *       正目标表示充电请求，不代表实测方向；电压环胜出后完整复位电流 PID，效果待观察。
  *       电流环启用积分限幅和条件积分，电压环保持 NONE；不增加环间输出跟踪。
- *       电流修正同时受 ±MaxOut 与总占空比边界约束，不按裁判帧更新或执行输出跟踪。
+ *       电流修正边界为 ±BSP_HRTIM_LOOP_DUTY_MAX（当前 ±0.2），叠加前馈后另限总占空比。
+ *       不按裁判帧更新或执行输出跟踪，不承诺胜出复位可实现无扰切换。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
 void PowerCtrl_Task(void);
