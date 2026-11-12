@@ -5,8 +5,8 @@
  *          未启用跟踪的实例保留原算法；复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       跟踪模式在死区内保留积分输出，P/D/本次积分增量清零，并保留真实求和比例项。
- *       未启用时死区输出仍为 0；增量式 Ki 为 0 时输出清零。
- *       当前应用电流环启用 Integral_Limit 和 PID_EXTERNAL_ANTI_WINDUP，其余三环保持 NONE。
+ *       未启用时位置式死区输出仍为 0；增量式 Ki 为 0 时保留累计输出。
+ *       当前应用两内环使用增量式，四环 Improve 均为 NONE。
  */
 #ifndef _PID_H
 #define _PID_H
@@ -73,7 +73,8 @@ typedef struct _PID_TypeDef
     float Last_Output;
     float Last_Dout;
 
-    float MaxOut;
+    float MaxOut; /**< 正常计算的输出上限；非负，单位与 Output 一致。 */
+    float MinOut; /**< 正常计算的输出下限；不大于 MaxOut，复位时保留。 */
     float IntegralLimit;
     float DeadBand;
     float ControlPeriod;
@@ -94,6 +95,7 @@ typedef struct _PID_TypeDef
     void (*PID_param_init)(
         struct _PID_TypeDef *pid,
         float maxOut,
+        float minOut,
         float integralLimit,
         float deadband,
         float Kp,
@@ -113,10 +115,28 @@ typedef struct _PID_TypeDef
     void (*PID_reset)(struct _PID_TypeDef *pid);
 } PID_TypeDef;
 
-/** @brief 原库增量式计算；measure/target 同单位，返回累计输出。 */
+/**
+ * @brief 执行增量式 PID，返回并更新累计 Output。
+ * @param[in,out] pid 已初始化实例，Output 为上一周期累计输出或调用方预置基值。
+ * @param[in] measure 本次反馈，与 target 同单位。
+ * @param[in] target 本次目标，与 measure 同单位。
+ * @return 按 [MinOut, MaxOut] 限幅后的累计输出，同时更新 Last_Output。
+ * @pre 指针有效、参数及输入有界；不得与同一实例计算、预置或复位并发。
+ * @note 增量为 Kp*(e-e1)+Ki*e+Kd*(e-2*e1+e2)，每次只推进一次误差历史。
+ *       ITerm 按 [-MaxOut, MaxOut] 对称限幅，累计 Output 按 [MinOut, MaxOut] 限幅。
+ *       Ki 为零不清累计输出；不读取 DeadBand、IntegralLimit 或 Improve。
+ *       调用方在本次计算后直接改写 Output 时，须按实例边界限幅并同步 Last_Output。
+ */
 float PID_Calculate_Increase(PID_TypeDef *pid, float measure, float target);
-/** @brief 设置原库参数与函数指针；调用者先清零完整实例，系数按每次调用定义。 */
-void PID_Init(PID_TypeDef *pid, float max_out, float intergral_limit, float deadband,
+/**
+ * @brief 设置输出上下限、原库参数和函数指针，系数按每次调用定义。
+ * @param[in] max_out 正常计算的输出上限，非负，单位与 Output 一致。
+ * @param[in] min_out 正常计算的输出下限，不大于 max_out。
+ * @pre 调用者先清零完整实例；上下限及其他参数有界。
+ * @note 初始化及复位仍清零运行状态，边界在正常计算时生效；复位保留上下限。
+ */
+void PID_Init(PID_TypeDef *pid, float max_out, float min_out,
+    float intergral_limit, float deadband,
 
     float kp, float Ki, float Kd,
 

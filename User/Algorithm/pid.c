@@ -5,7 +5,7 @@
  *          未启用跟踪的实例保留原算法；复位仅清运行状态并保留参数。
  * @note 系数按每次调用定义，不自动处理 dt。初始化前由调用者清零结构体；
  *       跟踪模式在死区内保留积分输出，P/D/本次积分增量清零，并保留真实求和比例项。
- *       未启用时死区输出仍为 0；增量式 Ki 为 0 时输出清零。应用层禁用电机堵转检测。
+ *       未启用时位置式死区输出仍为 0；增量式 Ki 为 0 时保留累计输出。应用层禁用电机堵转检测。
  */
 #include "pid.h"
 #include <stdbool.h>
@@ -25,6 +25,7 @@ static float Pid_CalculateCore(PID_TypeDef *pid, float measure, float target,
 static void f_PID_param_init(
     PID_TypeDef *pid,
     float max_out,
+    float min_out,
     float intergral_limit,
     float deadband,
 
@@ -43,6 +44,7 @@ static void f_PID_param_init(
     pid->DeadBand = deadband;
     pid->IntegralLimit = intergral_limit;
     pid->MaxOut = max_out;
+    pid->MinOut = min_out;
     pid->MaxErr = max_out * 2;
     pid->Target = 0;
 
@@ -247,6 +249,11 @@ void PID_TrackOutput(PID_TypeDef *pid, float applied_output)
     pid->Last_Output = applied_output;
 }
 
+/**
+ * @brief 按离散误差差分累计输出；Ki 为零时仍保留基值及 P/D 增量。
+ * @note Iout 为本次 Ki*Err，ITerm 为合成增量，不使用位置式 Improve 和 IntegralLimit。
+ *       ITerm 按 [-MaxOut, MaxOut] 限幅，累计 Output 按 [MinOut, MaxOut] 限幅并同步 Last_Output。
+ */
 float PID_Calculate_Increase(PID_TypeDef *pid, float measure, float target)
 {
     pid->Measure = measure;
@@ -265,9 +272,6 @@ float PID_Calculate_Increase(PID_TypeDef *pid, float measure, float target)
     OUTPUT_LIMIT(pid->ITerm, pid->MaxOut, -pid->MaxOut);
 
     pid->Output += pid->ITerm;
-
-    if(pid->Ki == 0)
-        pid->Output = 0;
 
     f_Output_Limit(pid);
 
@@ -362,9 +366,9 @@ static void f_Output_Limit(PID_TypeDef *pid)
     {
         pid->Output = pid->MaxOut;
     }
-    if(pid->Output < -(pid->MaxOut))
+    if(pid->Output < pid->MinOut)
     {
-        pid->Output = -(pid->MaxOut);
+        pid->Output = pid->MinOut;
     }
 }
 
@@ -404,7 +408,8 @@ static void f_PID_ErrorHandle(PID_TypeDef *pid)
     }
 }
 
-void PID_Init(PID_TypeDef *pid, float max_out, float intergral_limit, float deadband,
+void PID_Init(PID_TypeDef *pid, float max_out, float min_out,
+    float intergral_limit, float deadband,
 
     float kp, float Ki, float Kd,
 
@@ -414,7 +419,7 @@ void PID_Init(PID_TypeDef *pid, float max_out, float intergral_limit, float dead
 {
     pid->PID_param_init = f_PID_param_init;
     pid->PID_reset = f_PID_reset;
-    pid->PID_param_init(pid, max_out, intergral_limit, deadband,
+    pid->PID_param_init(pid, max_out, min_out, intergral_limit, deadband,
         kp, Ki, Kd, A, B, output_filtering_coefficient, derivative_filtering_coefficient, improve);
 }
 

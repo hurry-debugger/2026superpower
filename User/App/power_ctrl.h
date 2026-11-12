@@ -41,7 +41,7 @@ typedef union
  *       A_power_fdb 与 total_power_fbd 分别保存同周期 P_A 和 P_in，CTRL 更新 A 端目标；
  *       power_target_w 只保存目标功率，PROTECT 期间保留初值或上次目标，不用于控制。
  *       竞争限幅后的电流目标直接观察 power_pid.Output，不另存同值成员。
- *       电流环启用积分限幅和外部条件积分，其余三环保持 NONE；不启用滤波或输出跟踪。
+ *       两内环增量式输出完整占空比，四环 Improve 均为 NONE；不启用滤波或输出跟踪。
  *       开环不调用控制入口，测量与控制记录保持初值；Master 仍可更新错误字。
  */
 typedef struct
@@ -55,12 +55,14 @@ typedef struct
     float power_target_w; /**< A 端目标功率 P_lim-P_in+P_A-u_E，单位 W；仅 CTRL 更新。 */
     float current_upper_limit_a; /**< A 端正向目标上界 A；B 端充电参考上限乘原始前馈。 */
     float current_lower_limit_a; /**< A 端负向目标下界 A；低于最大电压的 20%（当前 5.8 V）为零，禁止主动请求放电。 */
-    float generalized_duty; /**< 有效电压时先存原始前馈，CTRL 最后存输出；无效时不覆盖。 */
+    float f_generalized_duty; /**< 本周期原始 V_CAP/V_CHASSIS，无量纲；供前馈门控、限流换算和接管预置，不受输出限幅覆盖。 */
+    float generalized_duty; /**< 送往调制层的值：CTRL 为 [0.05,29/24] 内的控制输出，PROTECT 为原始前馈预置请求。 */
     PID_TypeDef energy_pid; /**< 45 J 能量误差生成修正 u_E，W；每个控制周期计算。 */
     PID_TypeDef power_pid; /**< A 端目标与反馈之差等价于入口功率误差；输出目标电流 A。 */
-    PID_TypeDef voltage_pid; /**< 无量纲修正；每周期计算，仅正目标电流且电压资格允许时参与竞争。 */
-    PID_TypeDef current_pid; /**< A 端电流误差生成无量纲修正；电压环胜出后完整复位本实例以观察效果。 */
+    PID_TypeDef voltage_pid; /**< 电压增量式内环，Output 为完整广义占空比；正目标且资格允许时参与竞争。 */
+    PID_TypeDef current_pid; /**< A 端电流增量式内环，Output 为完整广义占空比；接管时预置，保留误差历史。 */
     uint8_t voltage_compete_enabled; /**< 电压资格历史：0 禁止、1 允许；运行期仅 ADC 更新，启动全局零初始化、恢复复位清零。 */
+    uint8_t voltage_loop_active; /**< 上周期实际控制权：0 电流环、1 电压环；仅 ADC 读写，恢复清零，用于识别接管边沿。 */
 } PowerCtrl_t;
 
 extern PowerCtrl_t g_power_ctrl;
@@ -69,7 +71,7 @@ extern PowerCtrl_t g_power_ctrl;
  * @brief 共用启动初始化：关闭输出、清零状态、进入 PROTECT 并初始化四环。
  * @pre MX_HRTIM1_Init 已完成，计数器和控制中断尚未启动；仅调用一次。
  * @note 未校准提示由板卡信息独立记录；本入口不检查校准状态，不预查普通错误。
- *       启动竞争资格依赖全局零初始化，本函数不另赋值；不初始化采样或裁判存储，不启动计数器。
+ *       启动竞争资格及控制权历史依赖全局零初始化，本函数不另赋值；不初始化采样或裁判存储，不启动计数器。
  *       不修改外设配置。
  */
 void PowerCtrl_Init(void);
@@ -87,25 +89,22 @@ void PowerCtrl_Init(void);
 void PowerCtrl_UpdateErrors(void);
 
 /**
- * @brief 25 kHz 检查底盘过流，执行状态切换及四环控制。
- * @pre ADC1 TC 先完成五路反馈处理；控制周期为 POWER_CTRL_PERIOD_US。
+ * @brief 25 kHz 检查底盘过流，执行状态切换、增量式内环及占空比竞争。
+ * @pre ADC1 TC 先完成反馈处理；控制周期为 POWER_CTRL_PERIOD_US。
  *      ADC1 DMA 优先级 0、Master 为 1；计数器及预装载已运行至少一个 PWM 周期。
- * @note 短路只判断底盘电流绝对值，命中置位并转 PROTECT，同周期关断，禁止自动重启。
- *       前馈所需电压无效时直接保护并清恢复计数，不除法、不改普通错误位；
- *       普通错误仍由 Master 1 kHz 归因。原始 Vcap/Vchassis 低于 0.05 同样禁止开启。
- *       V_BAT 须在 [15, ADC_V_BAT_MAX_V]，两路电流须在各自 ADC 理论量程内；
- *       统一用有效范围拒绝异常，直接保护、清恢复计数，不新增错误位或重复检查功率乘积。
- *       PROTECT 每周期关断；有效电压时预置前馈，无效时保留旧占空比记录。
- *       错误清零且前馈连续可用的第 12501 周期复位四环并单次开启；CTRL 不重复开启。
- *       PWM、比较值写入及 PID 复位只由 ADC 上下文执行。
- *       当前电流环、电压环每周期计算；能量环与功率环保持注释。
- *       竞争入口严格高于基础阈值加 1 V（当前 25.65 V）进入，低于基础阈值（24.65 V）退出。
- *       区间及边界相等时保持资格；启动依赖全局零初始化，恢复时清零；每个 CTRL 周期更新资格。
- *       仅 power_pid.Output > 0.0f、资格允许且电压修正更小时采用电压环，其余均用电流环。
- *       正目标表示充电请求，不代表实测方向；电压环胜出后完整复位电流 PID，效果待观察。
- *       电流环启用积分限幅和条件积分，电压环保持 NONE；不增加环间输出跟踪。
- *       电流修正边界为 ±BSP_HRTIM_LOOP_DUTY_MAX（当前 ±0.2），叠加前馈后另限总占空比。
- *       不按裁判帧更新或执行输出跟踪，不承诺胜出复位可实现无扰切换。
+ * @note 短路锁存至 MCU 复位，原始 Vcap/Vchassis 仍按开区间 (0.05,10) 门控。
+ *       本轮保留当前源码的直接除法和电容范围检查，不补写历史文档中的输入预检。
+ *       PROTECT 每周期关断并传递原始前馈预置，底层限于 [0.05,10]；NaN 跳过寄存器写入。
+ *       连续正常第 12501 周期复位四环、预置电流环并单次开启；CTRL 不重复开启。
+ *       当前两内环每周期各计算一次，能量、功率环保持注释；PID 及 PWM 仅由 ADC 管理。
+ *       电压资格严格高于 25.65 V 进入，低于 24.65 V 退出，区间及边界相等时保持。
+ *       仅正目标电流、资格允许且电压候选更小时选择电压环；相等或其他情况选择电流环。
+ *       资格与实际控制权历史分开保存；启动依赖全局零初始化，恢复时两者清零。
+ *       两内环初始化设置 MinOut/MaxOut，累计 Output 限于 [0.05,29/24]，直接采用选中环。
+ *       f_generalized_duty 独立保留原始前馈，generalized_duty 保存控制或保护预置请求。
+ *       进入 CTRL 或控制权变化时采用实测前馈加本周期 ITerm，随后限幅并对齐 Last_Output。
+ *       连续控制不重置输出；接管不清误差历史、不重复计算或竞争，不承诺无扰切换。
+ *       四环 Improve 均为 NONE，不启用位置式条件积分、滤波或输出跟踪。
  *       开环不调用此入口；不增加采样停更、执行超期或 CAN 模式控制。
  */
 void PowerCtrl_Task(void);
